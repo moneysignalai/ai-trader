@@ -1,0 +1,4 @@
+[
+  {"open": 99, "high": 100, "low": 98, "close": 99.5, "volume": 100000},
+  {"open": 100, "high": 101, "low": 99, "close": 100.5, "volume": 120000, "above_vwap": true}
+]
