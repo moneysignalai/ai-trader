@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "symbol": "TESTC1",
+      "expiration": "2099-01-05",
+      "strike": 100,
+      "option_type": "call",
+      "bid": 1.0,
+      "ask": 1.2,
+      "last": 1.1,
+      "volume": 1000,
+      "open_interest": 2000,
+      "delta": 0.4
+    },
+    {
+      "symbol": "TESTC2",
+      "expiration": "2099-01-05",
+      "strike": 110,
+      "option_type": "call",
+      "bid": 3.0,
+      "ask": 4.0,
+      "last": 3.5,
+      "volume": 10,
+      "open_interest": 10,
+      "delta": 0.2
+    }
+  ]
+}
