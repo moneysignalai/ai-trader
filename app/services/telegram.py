@@ -26,6 +26,12 @@ def _parse_response(response: httpx.Response) -> Dict[str, Any]:
     }
 
 
+def _truncate(value: Any, limit: int = 500) -> Any:
+    if isinstance(value, str) and len(value) > limit:
+        return value[:limit] + "..."
+    return value
+
+
 def send_message_with_http_response(text: str) -> Dict[str, Any]:
     """Send a message and return detailed Telegram response data."""
 
@@ -56,6 +62,41 @@ def send_message_with_http_response(text: str) -> Dict[str, Any]:
     return _parse_response(response)
 
 
-def send_message(text: str) -> str:
+def send_message(text: str) -> Dict[str, Any]:
+    """Send a message and return the full Telegram response."""
+
+    return send_message_with_http_response(text)
+
+
+def send_message_id_only(text: str) -> str:
+    """Send a message and return only the Telegram message id (if available)."""
+
     result = send_message_with_http_response(text)
     return result.get("message_id") or ""
+
+
+def send_or_log(text: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    """Send a message and log failures with context."""
+
+    context = context or {}
+    logger.info("Sending Telegram alert", extra=context)
+    result = send_message_with_http_response(text)
+    if not result.get("ok"):
+        logger.error(
+            "Telegram send failed",  # static message for easier filtering
+            extra={
+                **context,
+                "telegram_status_code": result.get("status_code"),
+                "telegram_response": _truncate(result.get("response")),
+            },
+        )
+    else:
+        logger.info(
+            "Telegram send ok",
+            extra={
+                **context,
+                "telegram_status_code": result.get("status_code"),
+                "telegram_response": _truncate(result.get("response")),
+            },
+        )
+    return result

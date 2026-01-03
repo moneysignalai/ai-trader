@@ -22,8 +22,13 @@ from app.services.scoring import score_signal
 from app.services.governor import allow_trade
 from app.services.trade_state import create_trade, update_trade_states
 from app.services.options_selector import select_option
-from app.services.templates import trade_idea_with_options, trade_idea_stock_only
-from app.services.telegram import send_message, send_message_with_http_response
+from app.services.templates import (
+    format_im_in,
+    format_im_out,
+    format_trade_idea_stock_only,
+    format_trade_idea_with_options,
+)
+from app.services.telegram import send_message_with_http_response, send_or_log
 
 configure_logging()
 settings = get_settings()
@@ -131,15 +136,6 @@ def test_telegram(request: Request):
     chat_id = settings.telegram_chat_id
     try:
         result = send_message_with_http_response(message)
-        response = {
-            "status": "sent",
-            "chat_id": chat_id,
-            "telegram_ok": bool(result.get("ok")),
-            "telegram_status_code": result.get("status_code"),
-            "telegram_response": _truncate_response(result.get("response")),
-        }
-        logger.info("JOB END /test/telegram result=%s", response)
-        return response
     except Exception as exc:  # noqa: BLE001
         status_code = None
         response_data = None
@@ -150,16 +146,36 @@ def test_telegram(request: Request):
                 response_data = response_obj.json()
             except Exception:  # noqa: BLE001
                 response_data = getattr(response_obj, "text", None)
+        error_payload = {
+            "status": "error",
+            "chat_id": chat_id,
+            "telegram_ok": False,
+            "telegram_status_code": status_code,
+            "telegram_response": _truncate_response(response_data),
+        }
         logger.exception("JOB ERROR /test/telegram")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "status": "error",
-                "detail": str(exc),
-                "telegram_status_code": status_code,
-                "telegram_response": _truncate_response(response_data),
-            },
-        )
+        return JSONResponse(status_code=500, content=error_payload)
+
+    response = {
+        "chat_id": chat_id,
+        "telegram_ok": bool(result.get("ok")),
+        "telegram_status_code": result.get("status_code"),
+        "telegram_response": _truncate_response(result.get("response")),
+    }
+
+    if result.get("response") in {"alerts-disabled", "telegram-disabled"}:
+        response["status"] = "disabled"
+        logger.info("JOB END /test/telegram result=%s", response)
+        return response
+
+    if result.get("ok"):
+        response["status"] = "sent"
+        logger.info("JOB END /test/telegram result=%s", response)
+        return response
+
+    response["status"] = "error"
+    logger.error("JOB ERROR /test/telegram result=%s", response)
+    return JSONResponse(status_code=500, content=response)
 
 
 @app.post("/universe/rebuild")
@@ -184,7 +200,7 @@ def rebuild_universe(request: Request, session=Depends(get_session)):
         )
 
 
-def run_scan(timeframe: str, session):
+def run_scan(timeframe: str, session, request_id: str | None = None):
     if not _within_rth():
         return {"message": "outside RTH window"}
     client = MassiveClient()
@@ -229,10 +245,17 @@ def run_scan(timeframe: str, session):
         option_decision.reason,
     )
     if option_decision.contract:
-        message = trade_idea_with_options(signal, option_decision.contract)
+        message = format_trade_idea_with_options(signal, option_decision.contract)
     else:
-        message = trade_idea_stock_only(signal, option_decision.reason or "Options unavailable")
-    send_message(message)
+        message = format_trade_idea_stock_only(signal, option_decision.reason or "Options unavailable")
+    send_or_log(
+        message,
+        context={
+            "endpoint": f"/scan/{timeframe}",
+            "ticker": signal.ticker,
+            "request_id": request_id,
+        },
+    )
     create_trade(session, signal, option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None)
     return {"signal": signal.ticker, "score": score}
 
@@ -248,10 +271,10 @@ def scan(tf: str, request: Request, session=Depends(get_session)):
     if tf not in {"scalp", "day", "swing"}:
         raise HTTPException(400, "invalid timeframe")
     if tf != "day":
-        return run_scan(tf, session)
+        return run_scan(tf, session, request.headers.get("x-request-id"))
     logger.info("JOB START /scan/day")
     try:
-        result = run_scan(tf, session)
+        result = run_scan(tf, session, request.headers.get("x-request-id"))
         logger.info("JOB END /scan/day result=%s", result)
         return result
     except Exception as exc:  # noqa: BLE001
@@ -284,22 +307,24 @@ def state_update(request: Request, session=Depends(get_session)):
         for trade in updated:
             if trade.state == "IN_POSITION":
                 messages.append(
-                    send_message(
-                        f"✅ I'M IN — {trade.ticker} at {trade.entry_fill:.2f} (trigger {trade.entry_trigger:.2f})"
+                    send_or_log(
+                        format_im_in(trade),
+                        context={
+                            "endpoint": "/state/update",
+                            "ticker": trade.ticker,
+                            "request_id": request.headers.get("x-request-id"),
+                        },
                     )
                 )
             elif trade.state == "CLOSED":
-                pnl_text = ""
-                if trade.entry_fill and trade.exit_fill:
-                    pnl = (trade.exit_fill - trade.entry_fill) * (1 if trade.direction == "bull" else -1)
-                    pnl_pct = (pnl / trade.entry_fill) * 100
-                    pnl_text = f" P/L≈{pnl:.2f} ({pnl_pct:.2f}%)"
                 messages.append(
-                    send_message(
-                        f"🏁 I'M OUT — {trade.ticker} {trade.exit_reason or ''}"
-                        f" entry={trade.entry_fill or trade.entry_trigger:.2f}"
-                        f" exit={trade.exit_fill or trade.t2:.2f}"
-                        f" stop={trade.stop:.2f} targets=({trade.t1:.2f},{trade.t2:.2f})" + pnl_text
+                    send_or_log(
+                        format_im_out(trade),
+                        context={
+                            "endpoint": "/state/update",
+                            "ticker": trade.ticker,
+                            "request_id": request.headers.get("x-request-id"),
+                        },
                     )
                 )
         response = {"updated": len(updated), "messages": len(messages)}

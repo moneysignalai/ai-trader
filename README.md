@@ -98,10 +98,12 @@ Target hit.
 **Environment Variables**
 - `MASSIVE_API_KEY` / `MASSIVE_BASE_URL`: Market data access.
 - `TELEGRAM_ENABLED`: Enable Telegram delivery when set to `true` (defaults to `false`).
+- `ALERTS_ENABLED`: Global kill-switch for all alerts (defaults to `true`).
+- `ALERT_STYLE`: Switch between `short`, `medium` (default), and `deep` alert detail levels.
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`: Alert delivery credentials.
 - `DATABASE_URL`: Postgres/SQLite connection string.
 - `ENABLE_RTH_ONLY`: Enforce regular-hours scans/state updates.
-- `ENV`, `ALERTS_ENABLED`, scoring/option thresholds (see `app/config.py`) for tuning.
+- `ENV`, scoring/option thresholds (see `app/config.py`) for tuning.
 
 **Cron Jobs (call the web endpoints; do NOT start uvicorn in cron)**
 - State updates every minute: `curl -X POST https://<service>.onrender.com/state/update`
@@ -117,7 +119,23 @@ Target hit.
 | POST | /scan/swing | Run swing scan. |
 | POST | /state/update | Advance trade states and send in/out alerts. |
 | POST | /universe/rebuild | Recreate the ticker universe for future scans. |
-| POST | /test/telegram | Send a test message to verify Telegram (available in code today). |
+| POST | /test/telegram | Send a test message to verify Telegram; returns delivery status and HTTP 500 on send failure. |
+
+`/test/telegram` returns JSON like:
+
+```json
+{
+  "status": "sent|disabled|error",
+  "chat_id": "<id from TELEGRAM_CHAT_ID>",
+  "telegram_ok": true,
+  "telegram_status_code": 200,
+  "telegram_response": { "ok": true, "result": { "message_id": "..." } }
+}
+```
+
+- `status="disabled"` when `ALERTS_ENABLED` or `TELEGRAM_ENABLED` are off (HTTP 200).
+- `status="sent"` only when Telegram confirms `ok=true`.
+- `status="error"` returns HTTP 500 with the status code/response payload from Telegram for easy debugging.
 
 ## Roadmap (Next 30/60/90 Days)
 - Planned: Additional setup detectors and adaptive weighting by market regime.
