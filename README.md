@@ -1,151 +1,117 @@
-# AI Trader — Automated Market-Scanning Trade Alerts
+# AI Trader — Telegram Alert Service
 
-Investor-ready engine that scans high-volume equities/ETFs, scores setups, and ships formatted trade alerts (stock + options) to Telegram.
+## Overview
+AI-driven alert system that scans high-volume stocks and ETFs, evaluates bullish and bearish setups, and sends disciplined trade ideas to Telegram. It behaves like a professional trader sharing entries, stops, and targets with followers. Alerts can include option contracts or stock-only plans when options are too expensive.
 
-## Executive Summary
-- FastAPI service that scans liquid tickers, detects repeatable setups, and formats “ready-to-send” alerts.
-- Built for operators who need credible, low-touch alerting; engineers can deploy/extend via a clean API surface.
-- Differentiator: deterministic templates, explicit guardrails (RTH-only, cooldowns), and an auditable state machine for in/out updates.
-- Markets: focuses on a configurable universe (seeded with major ETFs; designed to ingest top-volume equities up to ~500 names via the universe rebuild job).
-- Delivery: Telegram today; Discord and multi-channel routing are on the roadmap.
-- Core loop: rebuild universe → scan (day/scalp/swing) → score → alert → track state → send “I’m in/out” follow-ups.
+## What the system does
+- Scans top-volume stocks and ETFs for trade ideas.
+- Generates CALL and PUT option ideas when contracts are liquid and affordable.
+- Falls back to stock-only framing when options fail affordability or liquidity checks.
+- Defines entry, stop, and target levels for each idea.
+- Sends lifecycle alerts: Trade Idea, I'M IN, and I'M OUT.
 
-## What It Produces (Sample Alerts)
-Realistic examples using the live templates in `app/services/templates.py`.
+## System Architecture (Technical Overview)
+The service is deployed as a stateless FastAPI web app on Render. It exposes HTTP endpoints that are triggered by Render Cron Jobs; there is no always-on worker loop, so execution is event-driven. Market data is pulled on-demand from the Massive API, candidates are evaluated in-memory per scan, and trade state (entries, open positions, exits) is persisted in Postgres. Telegram is used only as a delivery channel—no orders are executed.
 
-**A) TRADE IDEA (Day)**
-```text
+Execution flow:
+1. Cron job triggers `/scan/day`.
+2. Service fetches the universe of top-volume tickers.
+3. Signals are evaluated for bullish and bearish setups.
+4. Options are checked for affordability and liquidity.
+5. A Trade Idea alert is formatted and sent to Telegram.
+6. The trade is stored in the database as "watching".
+7. Cron job triggers `/state/update`.
+8. Open trades are checked against entry, stop, and targets.
+9. I'M IN or I'M OUT alerts are sent.
+10. Trade state is updated in the database.
+
+Configuration notes:
+- `ENABLE_RTH_ONLY` gates scans and state updates to regular trading hours.
+- `ALERT_STYLE` controls alert verbosity without code changes (defaults to `medium`).
+- `TELEGRAM_ENABLED` gates delivery; when false, messages are logged as "telegram-disabled".
+
+## Example Alerts (Medium Style)
+Trade Idea (Options)
+```
 🚨 TRADE IDEA — NVDA CALLS
-
-I'm looking long NVDA here — Trend pullback into VWAP.
-
-**How I'm playing it (CALLS):**
-- **Contract:** NVDA240621C010000 | Exp 2024-06-21
-- **Entry:** 118.50
-- **Stop:** 116.40
-- **Targets:** 121.00 → 124.50
-
-Indicator snapshot: uptrend intact; 1.6x relative volume; reclaiming VWAP; RSI 58.
+Entry: 118.50 | Stop: 116.40 | Targets: 121.00 → 124.50
+Contract: NVDA240621C010000 (CALL)
+Why:
+- Trend pullback into VWAP
+- Uptrend intact; 1.6x volume; reclaiming VWAP
 ```
 
-**B) I'M IN (entry triggered)**
-```text
-✅ I'M IN — NVDA CALLS
-
-I'm in NVDA now — trigger hit at 118.60.
-
-- **Stop stays:** 116.40
-- **Next:** 121.00 first, then 124.50 if momentum holds.
+Trade Idea (Stock Only)
+```
+🚨 TRADE IDEA — AMD STOCK
+Entry: 154.20 | Stop: 150.80 | Targets: 158.00 → 162.50
+Options skipped: premiums above limit; playing shares only
+Why:
+- Bullish breakout with expanding volume
+- Holding above intraday support
 ```
 
-**C) I'M OUT (exit/target)**
-```text
-🏁 I'M OUT — NVDA CALLS
-Target hit.
+I'M IN
+```
+✅ I'M IN — AMD STOCK
+Triggered at 154.30
+Stop: 150.80 | Targets: 158.00 → 162.50
 ```
 
-> Options selection is supported today via the options selector; affordability/advanced contract curation improvements are marked as Planned in the roadmap.
-
-## Product Features
-### Scanning & Universe
-- **Implemented:** Configurable universe builder with always-include tickers; daily rebuild endpoint (`POST /universe/rebuild`) persists the latest list.
-- **Planned:** Automated ingestion of top 500 volume stocks + ETFs (Cron-driven rebuild).
-
-### Strategy Engine (Signals)
-- **Implemented:** Multiple detectors (`trend_pullback`, `breakout_volume`, `vwap_reclaim`, `mean_reversion_to_vwap`, `bollinger_squeeze`, `reversal_divergence`) scored via `app.services.scoring`.
-- **Implemented:** Timeframe-specific scans via `POST /scan/day`, `/scan/scalp`, `/scan/swing` with scoring/filters before alerting.
-- **Planned:** Additional strategies and adaptive scoring.
-
-### Trade State Machine
-- **Implemented:** Lifecycle of `watching → triggered (I'm in) → exited (I'm out)` with `/state/update` applying price checks and updating DB state.
-- **Implemented:** Cooldown + one-open-trade-per-ticker guardrails in `app.services.governor`.
-
-### Alerts & Delivery
-- **Implemented:** Telegram integration with deterministic message templates for Trade Idea, I'M IN, and I'M OUT.
-- **Planned:** Discord and channel-specific formatting.
-
-### Data & Storage
-- **Implemented:** SQLAlchemy models with Postgres/SQLite via `DATABASE_URL`; stores universes, signals, trades, and state transitions.
-
-### Safety & Guardrails
-- **Implemented:** Regular-trading-hours-only toggle (`ENABLE_RTH_ONLY`), per-ticker cooldowns, max alerts per ticker per day, and a `TELEGRAM_ENABLED` switch for dry runs.
-- **Planned:** Per-ticker rate limiting beyond cooldowns and user-level permissions.
-- **Always:** "No financial advice" disclaimer baked into ops guidance.
-
-## Architecture (High-level)
+I'M OUT
 ```
-[Market Data API] -> [Universe Builder] -> [Scanners] -> [Scoring] -> [Alert Composer] -> [Telegram]
-                            |                    |                      |
-                            v                    v                      v
-                          [DB] <----------- [Trade State Machine] <- [State Update]
+🏁 I'M OUT — AMD STOCK
+Target hit at 158.00
+Recorded and removed from active watchlist
 ```
 
-## How It Works (Plain English)
-- Pull a configurable list of liquid tickers (ETFs always included; rebuildable daily).
-- Fetch price/volume/indicator snapshots per ticker.
-- Run setup detectors (pullbacks, breakouts, VWAP plays, squeezes, divergences).
-- Score confidence and filter for the best candidate per scan run.
-- Attempt an options contract pick when enabled; fall back to stock-only framing if contracts fail liquidity/price checks.
-- Compose a Telegram-ready message (trade idea or stock-only) using deterministic templates.
-- Persist a trade record and enforce cooldowns/one-open-rule per ticker.
-- Continuously update trades via `/state/update` to announce "I'm in" triggers and "I'm out" exits.
+## Alert styles
+`ALERT_STYLE` controls message verbosity only and does not require code changes:
+- `short`
+- `medium` (default)
+- `deep`
 
-## Deploy / Ops (Render-first)
-**Operator Setup (Render Web Service)**
-- Build: `pip install -r requirements.txt`
-- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+If the value is unset or invalid, the system defaults to `medium`.
 
-**Environment Variables**
-- `MASSIVE_API_KEY` / `MASSIVE_BASE_URL`: Market data access.
-- `TELEGRAM_ENABLED`: Enable Telegram delivery when set to `true` (defaults to `false`).
-- `ALERTS_ENABLED`: Global kill-switch for all alerts (defaults to `true`).
-- `ALERT_STYLE`: Switch between `short`, `medium` (default), and `deep` alert detail levels.
-- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`: Alert delivery credentials.
-- `DATABASE_URL`: Postgres/SQLite connection string.
-- `ENABLE_RTH_ONLY`: Enforce regular-hours scans/state updates.
-- `ENV`, scoring/option thresholds (see `app/config.py`) for tuning.
+## Environment variables
+Required:
+- `DATABASE_URL`: Postgres connection string.
+- `MASSIVE_API_KEY`: Massive API key for market data.
+- `MASSIVE_BASE_URL`: Massive API base URL.
 
-**Cron Jobs (call the web endpoints; do NOT start uvicorn in cron)**
-- State updates every minute: `curl -X POST https://<service>.onrender.com/state/update`
-- Day scans every 5 minutes: `curl -X POST https://<service>.onrender.com/scan/day`
-- Universe rebuild daily: `curl -X POST https://<service>.onrender.com/universe/rebuild`
+Telegram:
+- `TELEGRAM_ENABLED`: Enable Telegram delivery when true; false disables sending but logs attempts as "telegram-disabled".
+- `TELEGRAM_BOT_TOKEN`: Bot token used to send messages.
+- `TELEGRAM_CHAT_ID`: Chat to receive alerts.
 
-## API Endpoints (Quick Reference)
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | /health | Liveness check (returns `{ "status": "ok" }`). |
-| POST | /scan/day | Run day-timeframe scan and push the top alert. |
-| POST | /scan/scalp | Run scalp scan. |
-| POST | /scan/swing | Run swing scan. |
-| POST | /state/update | Advance trade states and send in/out alerts. |
-| POST | /universe/rebuild | Recreate the ticker universe for future scans. |
-| POST | /test/telegram | Send a test message to verify Telegram; returns delivery status and HTTP 500 on send failure. |
+Trading / behavior:
+- `UNIVERSE_SIZE`: Number of tickers to scan (default 20; recommended 500 for breadth).
+- `ENABLE_RTH_ONLY`: Restrict scans and updates to regular trading hours when true.
+- `ALERT_STYLE`: Alert verbosity (`short`, `medium`, `deep`).
 
-`/test/telegram` returns JSON like:
+## Endpoints
+- `GET /health` — Liveness and DB connectivity check.
+- `GET /preflight` — Returns key configuration flags and DB connectivity status.
+- `POST /scan/day` — Runs the day scan and pushes the top alert candidate.
+- `POST /state/update` — Advances trade states and sends I'M IN or I'M OUT alerts.
+- `POST /universe/rebuild` — Rebuilds the ticker universe for future scans.
+- `POST /test/telegram` — Sends a test message to verify Telegram delivery.
 
-```json
-{
-  "status": "sent|disabled|error",
-  "chat_id": "<id from TELEGRAM_CHAT_ID>",
-  "telegram_ok": true,
-  "telegram_status_code": 200,
-  "telegram_response": { "ok": true, "result": { "message_id": "..." } }
-}
-```
+## Cron jobs (Render)
+The service is designed to be triggered by Render Cron Jobs calling HTTP endpoints.
+- Universe rebuild: daily call to `/universe/rebuild`.
+- Scan: every few minutes during RTH call to `/scan/day`.
+- State update: every few minutes during RTH call to `/state/update`.
 
-- `status="disabled"` when `ALERTS_ENABLED` or `TELEGRAM_ENABLED` are off (HTTP 200).
-- `status="sent"` only when Telegram confirms `ok=true`.
-- `status="error"` returns HTTP 500 with the status code/response payload from Telegram for easy debugging.
+## Testing
+Example checks for operators:
+- Test Telegram: `curl -X POST https://<service>.onrender.com/test/telegram`
+- Preflight check: `curl https://<service>.onrender.com/preflight`
+- Rebuild universe: `curl -X POST https://<service>.onrender.com/universe/rebuild`
 
-## Roadmap (Next 30/60/90 Days)
-- Planned: Additional setup detectors and adaptive weighting by market regime.
-- Planned: Improved options contract selection (affordability filters, spread-aware) and risk-sizing suggestions.
-- Planned: Backtesting harness + alert performance dashboard.
-- Planned: Discord delivery and per-channel formatting.
-- Planned: Multi-user subscriptions and per-user preferences.
-- Planned: Authentication token for cron-triggered calls.
+## Deployment (Render)
+- Runtime: `python-3.11.9`
+- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --access-log`
 
-## Compliance & Disclaimer
-- Not financial advice; for educational and research purposes only.
-- Trading involves risk; only trade what you can afford to lose.
-- Past performance is not indicative of future results.
+## Disclaimer
+Educational and informational use only. This system does not provide financial advice or execute trades.
