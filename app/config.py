@@ -70,6 +70,7 @@ class Settings:
     telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "demo")
     telegram_enabled: bool = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
     alerts_enabled: bool = os.getenv("ALERTS_ENABLED", "true").lower() == "true"
+    alert_style: str = os.getenv("ALERT_STYLE", "medium")
 
 
 @lru_cache()
