@@ -1,4 +1,4 @@
-# AI Trader — Telegram Alert Service
+# AI Trader — Intelligence Alert Service
 
 ## Overview
 AI-driven alert system that scans high-volume stocks and ETFs, evaluates bullish and bearish setups, and sends disciplined trade ideas to Telegram. It behaves like a professional trader sharing entries, stops, and targets with followers. Alerts can include option contracts or stock-only plans when options are too expensive.
