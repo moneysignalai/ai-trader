@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app.config import get_settings
+from app.services.options_normalize import normalize_options_snapshot
 
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,9 @@ class MassiveClient:
 
     def get_options_chain_snapshot(self, ticker: str) -> Dict[str, Any]:
         try:
-            return self._request("GET", f"/v3/snapshot/options/{ticker}")
+            raw = self._request("GET", f"/v3/snapshot/options/{ticker}")
+            normalized = normalize_options_snapshot(raw or {})
+            return {"results": normalized}
         except Exception as exc:  # noqa: BLE001
             logger.warning("Options snapshot unavailable for %s: %s", ticker, exc)
             return {"results": []}

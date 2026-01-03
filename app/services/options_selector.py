@@ -18,7 +18,7 @@ def _spread_ok(bid: float, ask: float, settings) -> bool:
     if bid is None or ask is None:
         return False
     spread = ask - bid
-    mid = (ask + bid) / 2 if (ask and bid) else ask or bid
+    mid = (ask + bid) / 2 if (ask is not None and bid is not None) else ask or bid
     if mid is None or mid == 0:
         return False
     return spread <= settings.max_bid_ask_spread_abs and (spread / mid) <= settings.max_bid_ask_spread_pct
@@ -55,13 +55,16 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
         delta_max = getattr(settings, f"delta_{timeframe}_max", 0.6)
         if not (delta_min <= delta <= delta_max):
             continue
-        bid = leg.get("bid") or 0
-        ask = leg.get("ask") or 0
+        bid = leg.get("bid")
+        ask = leg.get("ask")
         if not _spread_ok(bid, ask, settings):
             continue
-        if leg.get("open_interest", 0) < settings.min_oi or leg.get("volume", 0) < settings.min_option_volume:
+        open_interest = leg.get("open_interest") or 0
+        volume = leg.get("volume") or 0
+        if open_interest < settings.min_oi or volume < settings.min_option_volume:
             continue
-        premium = (bid + ask) / 2 if (bid and ask) else leg.get("last", 0)
+        mid = leg.get("mid") if leg.get("mid") is not None else ((bid + ask) / 2 if (bid is not None and ask is not None) else None)
+        premium = mid if mid is not None else leg.get("last", 0)
         if timeframe == "scalp" and premium > settings.max_premium_scalp:
             continue
         if timeframe == "day" and premium > settings.max_premium_day:
