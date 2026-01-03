@@ -1,6 +1,10 @@
+import logging
+import os
 from datetime import datetime
+
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy import text
+
 from app.config import get_settings, is_rth_now
 from app.logging_config import configure_logging
 from app.db import Base, engine, get_session
@@ -22,6 +26,13 @@ from app.services.telegram import send_message, send_message_with_http_response
 
 configure_logging()
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+logger.info(
+    "Telegram enabled: %s (TELEGRAM_ENABLED=%s)",
+    settings.telegram_enabled,
+    os.getenv("TELEGRAM_ENABLED"),
+)
 app = FastAPI(title="AI Trader Alert Engine")
 Base.metadata.create_all(bind=engine)
 

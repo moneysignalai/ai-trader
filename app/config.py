@@ -64,7 +64,7 @@ class Settings:
 
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "demo")
     telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "demo")
-    telegram_disable: bool = os.getenv("TELEGRAM_DISABLE", "true").lower() == "true"
+    telegram_enabled: bool = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
     alerts_enabled: bool = os.getenv("ALERTS_ENABLED", "true").lower() == "true"
 
 
