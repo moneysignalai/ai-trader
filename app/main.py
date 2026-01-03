@@ -18,7 +18,7 @@ from app.services.governor import allow_trade
 from app.services.trade_state import create_trade, update_trade_states
 from app.services.options_selector import select_option
 from app.services.templates import trade_idea_with_options, trade_idea_stock_only
-from app.services.telegram import send_message
+from app.services.telegram import send_message, send_message_with_http_response
 
 configure_logging()
 settings = get_settings()
@@ -55,8 +55,40 @@ def test_telegram():
         "If you see this, Telegram integration is working.\n"
         f"Timestamp: {timestamp}"
     )
-    send_message(message)
-    return {"status": "sent"}
+
+    def _truncate_response(resp: object) -> object:
+        if isinstance(resp, str) and len(resp) > 500:
+            return resp[:500] + "..."
+        return resp
+
+    chat_id = settings.telegram_chat_id
+    try:
+        result = send_message_with_http_response(message)
+    except Exception as exc:  # noqa: BLE001
+        status_code = None
+        response_data = None
+        if hasattr(exc, "response") and getattr(exc, "response") is not None:
+            response_obj = getattr(exc, "response")
+            status_code = getattr(response_obj, "status_code", None)
+            try:
+                response_data = response_obj.json()
+            except Exception:  # noqa: BLE001
+                response_data = getattr(response_obj, "text", None)
+        return {
+            "status": "error",
+            "chat_id": chat_id,
+            "detail": str(exc),
+            "telegram_status_code": status_code,
+            "telegram_response": _truncate_response(response_data),
+        }
+
+    return {
+        "status": "sent",
+        "chat_id": chat_id,
+        "telegram_ok": bool(result.get("ok")),
+        "telegram_status_code": result.get("status_code"),
+        "telegram_response": _truncate_response(result.get("response")),
+    }
 
 
 @app.post("/universe/rebuild")
