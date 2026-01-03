@@ -1,51 +1,132 @@
-# AI Trader Alert Engine
+# AI Trader — Automated Market-Scanning Trade Alerts
 
-Minimal FastAPI service that demonstrates the requested architecture: universe builder, setup detectors, scoring, options selector, governor, trade state machine, Telegram templates, and Render deployment notes.
+Investor-ready engine that scans high-volume equities/ETFs, scores setups, and ships formatted trade alerts (stock + options) to Telegram.
 
-## Quickstart
+## Executive Summary
+- FastAPI service that scans liquid tickers, detects repeatable setups, and formats “ready-to-send” alerts.
+- Built for operators who need credible, low-touch alerting; engineers can deploy/extend via a clean API surface.
+- Differentiator: deterministic templates, explicit guardrails (RTH-only, cooldowns), and an auditable state machine for in/out updates.
+- Markets: focuses on a configurable universe (seeded with major ETFs; designed to ingest top-volume equities up to ~500 names via the universe rebuild job).
+- Delivery: Telegram today; Discord and multi-channel routing are on the roadmap.
+- Core loop: rebuild universe → scan (day/scalp/swing) → score → alert → track state → send “I’m in/out” follow-ups.
 
-```bash
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+## What It Produces (Sample Alerts)
+Realistic examples using the live templates in `app/services/templates.py`.
+
+**A) TRADE IDEA (Day)**
+```text
+🚨 TRADE IDEA — NVDA CALLS
+
+I'm looking long NVDA here — Trend pullback into VWAP.
+
+**How I'm playing it (CALLS):**
+- **Contract:** NVDA240621C010000 | Exp 2024-06-21
+- **Entry:** 118.50
+- **Stop:** 116.40
+- **Targets:** 121.00 → 124.50
+
+Indicator snapshot: uptrend intact; 1.6x relative volume; reclaiming VWAP; RSI 58.
 ```
 
-## Deploy to Render
+**B) I'M IN (entry triggered)**
+```text
+✅ I'M IN — NVDA CALLS
 
-Make the service deployable with a copy/paste flow on Render:
+I'm in NVDA now — trigger hit at 118.60.
 
-1. Create a **Render Web Service** from this repo.
-2. Use these settings (also shown in `render.yaml`):
-   - Environment: **Python**
-   - Build Command: `pip install -r requirements.txt`
-   - Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-3. Configure environment variables:
-   - `MASSIVE_API_KEY`
-   - `MASSIVE_BASE_URL`
-   - `TELEGRAM_BOT_TOKEN`
-   - `TELEGRAM_CHAT_ID`
-   - `ENABLE_RTH_ONLY` (recommended: `true`)
-   - `DATABASE_URL` (optional; defaults to local SQLite when unset)
-4. Deploy and verify:
-   - Open `https://<your-service>.onrender.com/health` and confirm `{ "status": "ok" }`.
-   - Check logs for "Application startup complete".
+- **Stop stays:** 116.40
+- **Next:** 121.00 first, then 124.50 if momentum holds.
+```
 
-### Cron job examples
+**C) I'M OUT (exit/target)**
+```text
+🏁 I'M OUT — NVDA CALLS
+Target hit.
+```
 
-Schedule these with Render Cron Jobs or an external scheduler:
+> Options selection is supported today via the options selector; affordability/advanced contract curation improvements are marked as Planned in the roadmap.
 
-- `curl -X POST https://<your-service>.onrender.com/universe/rebuild`
-- `curl -X POST https://<your-service>.onrender.com/scan/day`
-- `curl -X POST https://<your-service>.onrender.com/state/update`
+## Product Features
+### Scanning & Universe
+- **Implemented:** Configurable universe builder with always-include tickers; daily rebuild endpoint (`POST /universe/rebuild`) persists the latest list.
+- **Planned:** Automated ingestion of top 500 volume stocks + ETFs (Cron-driven rebuild).
 
-## Environment variables
-See `app/config.py` for defaults. Key values: `MASSIVE_API_KEY`, `MASSIVE_BASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DATABASE_URL`, `ENABLE_RTH_ONLY`, `ALERTS_ENABLED`.
+### Strategy Engine (Signals)
+- **Implemented:** Multiple detectors (`trend_pullback`, `breakout_volume`, `vwap_reclaim`, `mean_reversion_to_vwap`, `bollinger_squeeze`, `reversal_divergence`) scored via `app.services.scoring`.
+- **Implemented:** Timeframe-specific scans via `POST /scan/day`, `/scan/scalp`, `/scan/swing` with scoring/filters before alerting.
+- **Planned:** Additional strategies and adaptive scoring.
 
-## Tests and fixtures
-- Unit tests live in `app/tests/` and use fixtures under `app/tests/fixtures/`.
-- Run with `pytest`.
+### Trade State Machine
+- **Implemented:** Lifecycle of `watching → triggered (I'm in) → exited (I'm out)` with `/state/update` applying price checks and updating DB state.
+- **Implemented:** Cooldown + one-open-trade-per-ticker guardrails in `app.services.governor`.
 
-## Example Telegram outputs
-Templates under `app/services/templates.py` provide deterministic messages for TRADE IDEA, I'M IN, and I'M OUT alerts. Tests rely on the text formatting to assert flows.
+### Alerts & Delivery
+- **Implemented:** Telegram integration with deterministic message templates for Trade Idea, I'M IN, and I'M OUT.
+- **Planned:** Discord and channel-specific formatting.
 
-## Database
-SQLite for development (see `DATABASE_URL` default). Models live in `app/models.py`; production can swap `DATABASE_URL` for Postgres. Alembic placeholder is under `app/migrations/`.
+### Data & Storage
+- **Implemented:** SQLAlchemy models with Postgres/SQLite via `DATABASE_URL`; stores universes, signals, trades, and state transitions.
+
+### Safety & Guardrails
+- **Implemented:** Regular-trading-hours-only toggle (`ENABLE_RTH_ONLY`), per-ticker cooldowns, max alerts per ticker per day, and Telegram disable switch for dry runs.
+- **Planned:** Per-ticker rate limiting beyond cooldowns and user-level permissions.
+- **Always:** "No financial advice" disclaimer baked into ops guidance.
+
+## Architecture (High-level)
+```
+[Market Data API] -> [Universe Builder] -> [Scanners] -> [Scoring] -> [Alert Composer] -> [Telegram]
+                            |                    |                      |
+                            v                    v                      v
+                          [DB] <----------- [Trade State Machine] <- [State Update]
+```
+
+## How It Works (Plain English)
+- Pull a configurable list of liquid tickers (ETFs always included; rebuildable daily).
+- Fetch price/volume/indicator snapshots per ticker.
+- Run setup detectors (pullbacks, breakouts, VWAP plays, squeezes, divergences).
+- Score confidence and filter for the best candidate per scan run.
+- Attempt an options contract pick when enabled; fall back to stock-only framing if contracts fail liquidity/price checks.
+- Compose a Telegram-ready message (trade idea or stock-only) using deterministic templates.
+- Persist a trade record and enforce cooldowns/one-open-rule per ticker.
+- Continuously update trades via `/state/update` to announce "I'm in" triggers and "I'm out" exits.
+
+## Deploy / Ops (Render-first)
+**Operator Setup (Render Web Service)**
+- Build: `pip install -r requirements.txt`
+- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+**Environment Variables**
+- `MASSIVE_API_KEY` / `MASSIVE_BASE_URL`: Market data access.
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`: Alert delivery; set `TELEGRAM_DISABLE=true` to mute.
+- `DATABASE_URL`: Postgres/SQLite connection string.
+- `ENABLE_RTH_ONLY`: Enforce regular-hours scans/state updates.
+- `ENV`, `ALERTS_ENABLED`, scoring/option thresholds (see `app/config.py`) for tuning.
+
+**Cron Jobs (call the web endpoints; do NOT start uvicorn in cron)**
+- State updates every minute: `curl -X POST https://<service>.onrender.com/state/update`
+- Day scans every 5 minutes: `curl -X POST https://<service>.onrender.com/scan/day`
+- Universe rebuild daily: `curl -X POST https://<service>.onrender.com/universe/rebuild`
+
+## API Endpoints (Quick Reference)
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | /health | Liveness check (returns `{ "status": "ok" }`). |
+| POST | /scan/day | Run day-timeframe scan and push the top alert. |
+| POST | /scan/scalp | Run scalp scan. |
+| POST | /scan/swing | Run swing scan. |
+| POST | /state/update | Advance trade states and send in/out alerts. |
+| POST | /universe/rebuild | Recreate the ticker universe for future scans. |
+| POST | /test/telegram | Send a test message to verify Telegram (available in code today). |
+
+## Roadmap (Next 30/60/90 Days)
+- Planned: Additional setup detectors and adaptive weighting by market regime.
+- Planned: Improved options contract selection (affordability filters, spread-aware) and risk-sizing suggestions.
+- Planned: Backtesting harness + alert performance dashboard.
+- Planned: Discord delivery and per-channel formatting.
+- Planned: Multi-user subscriptions and per-user preferences.
+- Planned: Authentication token for cron-triggered calls.
+
+## Compliance & Disclaimer
+- Not financial advice; for educational and research purposes only.
+- Trading involves risk; only trade what you can afford to lose.
+- Past performance is not indicative of future results.
