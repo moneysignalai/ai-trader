@@ -53,8 +53,12 @@ def _detectors():
 
 
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+def health(session=Depends(get_session)):
+    try:
+        session.execute(text("SELECT 1"))
+        return {"status": "ok", "db": "ok"}
+    except Exception:  # noqa: BLE001
+        return {"status": "error", "db": "unavailable"}
 
 
 @app.post("/test/telegram")
@@ -111,10 +115,18 @@ def rebuild_universe(session=Depends(get_session)):
 def run_scan(timeframe: str, session):
     if not _within_rth():
         return {"message": "outside RTH window"}
-    client = MassiveClient(base_path="app/tests/fixtures")
+    client = MassiveClient()
     signals = []
     tickers = universe_service.latest_universe(session)
-    for ticker in tickers[:5]:
+    start_time = datetime.utcnow()
+    processed = 0
+    for ticker in tickers:
+        if processed >= settings.max_tickers_per_run:
+            logger.info("Stopping scan after hitting MAX_TICKERS_PER_RUN=%s", settings.max_tickers_per_run)
+            break
+        if (datetime.utcnow() - start_time).total_seconds() > settings.max_runtime_seconds:
+            logger.info("Stopping scan after hitting runtime limit %ss", settings.max_runtime_seconds)
+            break
         ohlcv = client.get_aggregates(ticker)
         # attach ticker
         for candle in ohlcv:
@@ -124,16 +136,26 @@ def run_scan(timeframe: str, session):
             if sig:
                 scored = score_signal(sig)
                 sig.features["score"] = scored.total
+                logger.info("Signal candidate %s score=%s setup=%s", ticker, scored.total, sig.setup_name)
                 signals.append((sig, scored.total))
                 break
+        processed += 1
     if not signals:
         return {"message": "no signals"}
     # pick best signal
     signal, score = sorted(signals, key=lambda x: x[1], reverse=True)[0]
+    logger.info("Top signal %s score=%s setup=%s", signal.ticker, score, signal.setup_name)
     allowed, reason = allow_trade(session, signal.ticker)
     if not allowed:
         return {"blocked": reason}
-    option_decision = select_option(signal, client.get_options_chain_snapshot(signal.ticker), underlying_price=signal.entry_trigger)
+    option_snapshot = client.get_options_chain_snapshot(signal.ticker)
+    option_decision = select_option(signal, option_snapshot, underlying_price=signal.entry_trigger)
+    logger.info(
+        "Option decision for %s chosen=%s reason=%s",
+        signal.ticker,
+        bool(option_decision.contract),
+        option_decision.reason,
+    )
     if option_decision.contract:
         message = trade_idea_with_options(signal, option_decision.contract)
     else:
@@ -154,7 +176,8 @@ def scan(tf: str, session=Depends(get_session)):
 def state_update(session=Depends(get_session)):
     if not _within_rth():
         return {"message": "outside RTH window"}
-    client = MassiveClient(base_path="app/tests/fixtures")
+    client = MassiveClient()
+
     def price_lookup(ticker: str):
         snap = client.get_snapshot(ticker)
         return snap.get("last", 0) or 0
@@ -162,10 +185,26 @@ def state_update(session=Depends(get_session)):
     messages = []
     for trade in updated:
         if trade.state == "IN_POSITION":
-            messages.append(send_message(f"✅ I'M IN — {trade.ticker}"))
+            messages.append(
+                send_message(
+                    f"✅ I'M IN — {trade.ticker} at {trade.entry_fill:.2f} (trigger {trade.entry_trigger:.2f})"
+                )
+            )
         elif trade.state == "CLOSED":
-            messages.append(send_message(f"🏁 I'M OUT — {trade.ticker} {trade.exit_reason}"))
-    return {"updated": len(updated)}
+            pnl_text = ""
+            if trade.entry_fill and trade.exit_fill:
+                pnl = (trade.exit_fill - trade.entry_fill) * (1 if trade.direction == "bull" else -1)
+                pnl_pct = (pnl / trade.entry_fill) * 100
+                pnl_text = f" P/L≈{pnl:.2f} ({pnl_pct:.2f}%)"
+            messages.append(
+                send_message(
+                    f"🏁 I'M OUT — {trade.ticker} {trade.exit_reason or ''}"
+                    f" entry={trade.entry_fill or trade.entry_trigger:.2f}"
+                    f" exit={trade.exit_fill or trade.t2:.2f}"
+                    f" stop={trade.stop:.2f} targets=({trade.t1:.2f},{trade.t2:.2f})" + pnl_text
+                )
+            )
+    return {"updated": len(updated), "messages": len(messages)}
 
 
 @app.get("/debug/trades")

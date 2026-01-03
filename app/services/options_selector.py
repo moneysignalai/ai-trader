@@ -1,6 +1,8 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Dict, Optional
+from datetime import datetime
+
 from app.config import get_settings
 from app.services.setups.base import SignalCandidate
 

@@ -1,18 +1,37 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Optional
+
 from app.config import get_settings
-from app.models import Trade
+from app.models import Trade, GovernorCooldown
 
 
 def allow_trade(session, ticker: str) -> tuple[bool, Optional[str]]:
     settings = get_settings()
     now = datetime.utcnow()
-    # one open trade per ticker
-    existing = session.query(Trade).filter(lambda t: t.ticker == ticker and t.state != "CLOSED").all()
-    if existing:
+    open_trade = session.query(Trade).filter(Trade.ticker == ticker, Trade.state != "CLOSED").first()
+    if open_trade:
         return False, "Existing open trade"
+
     cutoff = now - timedelta(minutes=settings.cooldown_minutes)
-    recent = session.query(Trade).filter(lambda t: t.ticker == ticker and t.opened_at >= cutoff).count()
+    recent = session.query(Trade).filter(Trade.ticker == ticker, Trade.opened_at >= cutoff).count()
     if recent >= settings.max_alerts_per_ticker_per_day:
         return False, "Max alerts reached"
+
+    cooldown = session.query(GovernorCooldown).filter(GovernorCooldown.ticker == ticker).first()
+    if cooldown:
+        if cooldown.locked:
+            return False, "Ticker locked"
+        if cooldown.as_of_date == date.today() and cooldown.alerts_today >= settings.max_alerts_per_ticker_per_day:
+            return False, "Daily cap"
+        if (now - cooldown.last_alert_at) < timedelta(minutes=settings.ticker_cooldown_minutes):
+            return False, "Cooling down"
+        if cooldown.as_of_date != date.today():
+            cooldown.alerts_today = 0
+        cooldown.last_alert_at = now
+        cooldown.as_of_date = date.today()
+        cooldown.alerts_today = cooldown.alerts_today + 1
+    else:
+        cooldown = GovernorCooldown(ticker=ticker, last_alert_at=now, as_of_date=date.today(), alerts_today=1)
+        session.add(cooldown)
+    session.commit()
     return True, None

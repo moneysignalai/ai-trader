@@ -1,21 +1,37 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import List
+
 from app.config import get_settings
 from app.models import Universe
+from app.services.massive_client import MassiveClient
+
+
+def _fetch_top_volume(client: MassiveClient, target_date: date) -> List[str]:
+    tickers = client.get_top_volume(target_date.isoformat())
+    return [t for t in tickers if t]
 
 
 def build_universe(session) -> List[str]:
     settings = get_settings()
-    # Basic deterministic universe: always include configured tickers and append placeholders
-    tickers = list(dict.fromkeys(settings.always_include_tickers))
-    # Fill to universe_size with synthetic tickers for tests
-    while len(tickers) < settings.universe_size:
-        tickers.append(f"T{len(tickers)+1}")
-    today = date.today().isoformat()
-    record = Universe(date=today, tickers_json=tickers)
+    client = MassiveClient()
+    today = date.today()
+    # try today then previous trading day fallback
+    tickers = _fetch_top_volume(client, today)
+    if len(tickers) < settings.universe_size:
+        tickers = _fetch_top_volume(client, today - timedelta(days=1))
+
+    tickers = [t for t in tickers if t not in settings.exclude_tickers]
+    tickers = list(dict.fromkeys(settings.always_include_tickers + tickers))
+    tickers = tickers[: max(settings.universe_size, 500)]
+    if len(tickers) < 500:
+        # pad deterministically if provider returned fewer
+        while len(tickers) < 500:
+            tickers.append(f"FILL{len(tickers)+1}")
+    record = Universe(date=today, tickers_json=tickers[:500])
     session.add(record)
     session.commit()
-    return tickers
+    session.refresh(record)
+    return record.tickers_json
 
 
 def latest_universe(session) -> List[str]:
