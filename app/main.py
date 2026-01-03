@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import get_settings, is_rth_now
@@ -113,6 +114,7 @@ def test_telegram(request: Request):
         request.url.path,
         request.headers.get("user-agent"),
     )
+    logger.info("JOB START /test/telegram")
     timestamp = datetime.now().isoformat()
     message = (
         "🚨 TEST ALERT\n"
@@ -129,6 +131,15 @@ def test_telegram(request: Request):
     chat_id = settings.telegram_chat_id
     try:
         result = send_message_with_http_response(message)
+        response = {
+            "status": "sent",
+            "chat_id": chat_id,
+            "telegram_ok": bool(result.get("ok")),
+            "telegram_status_code": result.get("status_code"),
+            "telegram_response": _truncate_response(result.get("response")),
+        }
+        logger.info("JOB END /test/telegram result=%s", response)
+        return response
     except Exception as exc:  # noqa: BLE001
         status_code = None
         response_data = None
@@ -139,21 +150,16 @@ def test_telegram(request: Request):
                 response_data = response_obj.json()
             except Exception:  # noqa: BLE001
                 response_data = getattr(response_obj, "text", None)
-        return {
-            "status": "error",
-            "chat_id": chat_id,
-            "detail": str(exc),
-            "telegram_status_code": status_code,
-            "telegram_response": _truncate_response(response_data),
-        }
-
-    return {
-        "status": "sent",
-        "chat_id": chat_id,
-        "telegram_ok": bool(result.get("ok")),
-        "telegram_status_code": result.get("status_code"),
-        "telegram_response": _truncate_response(result.get("response")),
-    }
+        logger.exception("JOB ERROR /test/telegram")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "detail": str(exc),
+                "telegram_status_code": status_code,
+                "telegram_response": _truncate_response(response_data),
+            },
+        )
 
 
 @app.post("/universe/rebuild")
@@ -164,8 +170,18 @@ def rebuild_universe(request: Request, session=Depends(get_session)):
         request.url.path,
         request.headers.get("user-agent"),
     )
-    tickers = universe_service.build_universe(session)
-    return {"count": len(tickers)}
+    logger.info("JOB START /universe/rebuild")
+    try:
+        tickers = universe_service.build_universe(session)
+        response = {"count": len(tickers)}
+        logger.info("JOB END /universe/rebuild result=%s", response)
+        return response
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("JOB ERROR /universe/rebuild")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "detail": str(exc)},
+        )
 
 
 def run_scan(timeframe: str, session):
@@ -231,7 +247,19 @@ def scan(tf: str, request: Request, session=Depends(get_session)):
     )
     if tf not in {"scalp", "day", "swing"}:
         raise HTTPException(400, "invalid timeframe")
-    return run_scan(tf, session)
+    if tf != "day":
+        return run_scan(tf, session)
+    logger.info("JOB START /scan/day")
+    try:
+        result = run_scan(tf, session)
+        logger.info("JOB END /scan/day result=%s", result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("JOB ERROR /scan/day")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "detail": str(exc)},
+        )
 
 
 @app.post("/state/update")
@@ -242,6 +270,7 @@ def state_update(request: Request, session=Depends(get_session)):
         request.url.path,
         request.headers.get("user-agent"),
     )
+    logger.info("JOB START /state/update")
     if not _within_rth():
         return {"message": "outside RTH window"}
     client = MassiveClient()
@@ -249,30 +278,39 @@ def state_update(request: Request, session=Depends(get_session)):
     def price_lookup(ticker: str):
         snap = client.get_snapshot(ticker)
         return snap.get("last", 0) or 0
-    updated = update_trade_states(session, price_lookup)
-    messages = []
-    for trade in updated:
-        if trade.state == "IN_POSITION":
-            messages.append(
-                send_message(
-                    f"✅ I'M IN — {trade.ticker} at {trade.entry_fill:.2f} (trigger {trade.entry_trigger:.2f})"
+    try:
+        updated = update_trade_states(session, price_lookup)
+        messages = []
+        for trade in updated:
+            if trade.state == "IN_POSITION":
+                messages.append(
+                    send_message(
+                        f"✅ I'M IN — {trade.ticker} at {trade.entry_fill:.2f} (trigger {trade.entry_trigger:.2f})"
+                    )
                 )
-            )
-        elif trade.state == "CLOSED":
-            pnl_text = ""
-            if trade.entry_fill and trade.exit_fill:
-                pnl = (trade.exit_fill - trade.entry_fill) * (1 if trade.direction == "bull" else -1)
-                pnl_pct = (pnl / trade.entry_fill) * 100
-                pnl_text = f" P/L≈{pnl:.2f} ({pnl_pct:.2f}%)"
-            messages.append(
-                send_message(
-                    f"🏁 I'M OUT — {trade.ticker} {trade.exit_reason or ''}"
-                    f" entry={trade.entry_fill or trade.entry_trigger:.2f}"
-                    f" exit={trade.exit_fill or trade.t2:.2f}"
-                    f" stop={trade.stop:.2f} targets=({trade.t1:.2f},{trade.t2:.2f})" + pnl_text
+            elif trade.state == "CLOSED":
+                pnl_text = ""
+                if trade.entry_fill and trade.exit_fill:
+                    pnl = (trade.exit_fill - trade.entry_fill) * (1 if trade.direction == "bull" else -1)
+                    pnl_pct = (pnl / trade.entry_fill) * 100
+                    pnl_text = f" P/L≈{pnl:.2f} ({pnl_pct:.2f}%)"
+                messages.append(
+                    send_message(
+                        f"🏁 I'M OUT — {trade.ticker} {trade.exit_reason or ''}"
+                        f" entry={trade.entry_fill or trade.entry_trigger:.2f}"
+                        f" exit={trade.exit_fill or trade.t2:.2f}"
+                        f" stop={trade.stop:.2f} targets=({trade.t1:.2f},{trade.t2:.2f})" + pnl_text
+                    )
                 )
-            )
-    return {"updated": len(updated), "messages": len(messages)}
+        response = {"updated": len(updated), "messages": len(messages)}
+        logger.info("JOB END /state/update result=%s", response)
+        return response
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("JOB ERROR /state/update")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "detail": str(exc)},
+        )
 
 
 @app.get("/debug/trades")
