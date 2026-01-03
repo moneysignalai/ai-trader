@@ -67,6 +67,44 @@ def health(request: Request, session=Depends(get_session)):
         return {"status": "error", "db": "unavailable"}
 
 
+def _env_bool(var_name: str, default: bool) -> bool:
+    return os.getenv(var_name, str(default)).lower() == "true"
+
+
+def _env_int(var_name: str, default: int) -> int:
+    try:
+        return int(os.getenv(var_name, str(default)))
+    except ValueError:
+        return default
+
+
+@app.get("/preflight")
+def preflight(request: Request):
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
+
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        db_connected = True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Preflight DB check failed: %s", exc)
+        db_connected = False
+
+    return {
+        "status": "ok",
+        "telegram_enabled": _env_bool("TELEGRAM_ENABLED", False),
+        "db_connected": db_connected,
+        "enable_rth_only": _env_bool("ENABLE_RTH_ONLY", True),
+        "universe_size": _env_int("UNIVERSE_SIZE", 20),
+        "service_time_utc": datetime.utcnow().isoformat() + "Z",
+    }
+
+
 @app.post("/test/telegram")
 def test_telegram(request: Request):
     logger.info(
