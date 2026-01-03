@@ -2,7 +2,7 @@ import logging
 import os
 from datetime import datetime
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from sqlalchemy import text
 
 from app.config import get_settings, is_rth_now
@@ -53,7 +53,13 @@ def _detectors():
 
 
 @app.get("/health")
-def health(session=Depends(get_session)):
+def health(request: Request, session=Depends(get_session)):
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
     try:
         session.execute(text("SELECT 1"))
         return {"status": "ok", "db": "ok"}
@@ -62,7 +68,13 @@ def health(session=Depends(get_session)):
 
 
 @app.post("/test/telegram")
-def test_telegram():
+def test_telegram(request: Request):
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
     timestamp = datetime.now().isoformat()
     message = (
         "🚨 TEST ALERT\n"
@@ -107,7 +119,13 @@ def test_telegram():
 
 
 @app.post("/universe/rebuild")
-def rebuild_universe(session=Depends(get_session)):
+def rebuild_universe(request: Request, session=Depends(get_session)):
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
     tickers = universe_service.build_universe(session)
     return {"count": len(tickers)}
 
@@ -166,14 +184,26 @@ def run_scan(timeframe: str, session):
 
 
 @app.post("/scan/{tf}")
-def scan(tf: str, session=Depends(get_session)):
+def scan(tf: str, request: Request, session=Depends(get_session)):
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
     if tf not in {"scalp", "day", "swing"}:
         raise HTTPException(400, "invalid timeframe")
     return run_scan(tf, session)
 
 
 @app.post("/state/update")
-def state_update(session=Depends(get_session)):
+def state_update(request: Request, session=Depends(get_session)):
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
     if not _within_rth():
         return {"message": "outside RTH window"}
     client = MassiveClient()
