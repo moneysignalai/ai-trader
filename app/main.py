@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy import text
-from app.config import get_settings
+from app.config import get_settings, is_rth_now
 from app.logging_config import configure_logging
 from app.db import Base, engine, get_session
 from app import models
@@ -23,6 +23,10 @@ configure_logging()
 settings = get_settings()
 app = FastAPI(title="AI Trader Alert Engine")
 Base.metadata.create_all(bind=engine)
+
+
+def _within_rth() -> bool:
+    return not settings.enable_rth_only or is_rth_now(settings)
 
 
 def _detectors():
@@ -48,6 +52,8 @@ def rebuild_universe(session=Depends(get_session)):
 
 
 def run_scan(timeframe: str, session):
+    if not _within_rth():
+        return {"message": "outside RTH window"}
     client = MassiveClient(base_path="app/tests/fixtures")
     signals = []
     tickers = universe_service.latest_universe(session)
@@ -89,6 +95,8 @@ def scan(tf: str, session=Depends(get_session)):
 
 @app.post("/state/update")
 def state_update(session=Depends(get_session)):
+    if not _within_rth():
+        return {"message": "outside RTH window"}
     client = MassiveClient(base_path="app/tests/fixtures")
     def price_lookup(ticker: str):
         snap = client.get_snapshot(ticker)
