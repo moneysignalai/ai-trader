@@ -1,5 +1,12 @@
 import os
+from datetime import datetime, time
 from functools import lru_cache
+
+import pytz
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 
 class Settings:
@@ -58,8 +65,23 @@ class Settings:
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "demo")
     telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "demo")
     telegram_disable: bool = os.getenv("TELEGRAM_DISABLE", "true").lower() == "true"
+    alerts_enabled: bool = os.getenv("ALERTS_ENABLED", "true").lower() == "true"
 
 
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+def _parse_time(value: str) -> time:
+    hour, minute = [int(part) for part in value.split(":", maxsplit=1)]
+    return time(hour=hour, minute=minute)
+
+
+def is_rth_now(settings: Settings | None = None) -> bool:
+    settings = settings or get_settings()
+    tz = pytz.timezone(settings.timezone)
+    now = datetime.now(tz)
+    start = tz.localize(datetime.combine(now.date(), _parse_time(settings.rth_start)))
+    end = tz.localize(datetime.combine(now.date(), _parse_time(settings.rth_end)))
+    return start <= now <= end

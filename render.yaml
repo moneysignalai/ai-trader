@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ai-trader
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: prod
+      - key: TELEGRAM_DISABLE
+        value: "true"
+# Uncomment to provision a managed Postgres database
+# databases:
+#   - name: ai-trader-db
+#     plan: free
