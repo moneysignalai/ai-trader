@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy import text
 from app.config import get_settings, is_rth_now
@@ -43,6 +44,19 @@ def _detectors():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/test/telegram")
+def test_telegram():
+    timestamp = datetime.now().isoformat()
+    message = (
+        "🚨 TEST ALERT\n"
+        "This is a system test.\n"
+        "If you see this, Telegram integration is working.\n"
+        f"Timestamp: {timestamp}"
+    )
+    send_message(message)
+    return {"status": "sent"}
 
 
 @app.post("/universe/rebuild")
