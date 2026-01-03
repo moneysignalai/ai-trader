@@ -29,6 +29,10 @@ class Settings:
     rth_start: str = os.getenv("RTH_START", "09:30")
     rth_end: str = os.getenv("RTH_END", "16:00")
 
+    max_tickers_per_run: int = int(os.getenv("MAX_TICKERS_PER_RUN", "500"))
+    max_runtime_seconds: int = int(os.getenv("MAX_RUNTIME_SECONDS", "120"))
+    ticker_cooldown_minutes: int = int(os.getenv("TICKER_COOLDOWN_MINUTES", "5"))
+
     min_score_scalp: int = int(os.getenv("MIN_SCORE_SCALP", "80"))
     min_score_day: int = int(os.getenv("MIN_SCORE_DAY", "78"))
     min_score_swing: int = int(os.getenv("MIN_SCORE_SWING", "75"))

@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List
+
 from app.models import Trade
 
 STATE_WAITING = "WAITING_FOR_ENTRY"
@@ -30,7 +31,7 @@ def create_trade(session, signal, option_symbol: str | None = None) -> Trade:
 
 def update_trade_states(session, price_lookup: callable) -> List[Trade]:
     updated = []
-    trades = session.query(Trade).filter(lambda t: t.state != STATE_CLOSED).all()
+    trades = session.query(Trade).filter(Trade.state != STATE_CLOSED).all()
     for trade in trades:
         price = price_lookup(trade.ticker)
         if trade.state == STATE_WAITING:
@@ -47,6 +48,7 @@ def update_trade_states(session, price_lookup: callable) -> List[Trade]:
             ):
                 trade.state = STATE_CLOSED
                 trade.exit_reason = "Invalidation"
+                trade.exit_fill = price
                 trade.exited_at = datetime.utcnow()
                 updated.append(trade)
             elif (trade.direction == "bull" and price >= trade.t2) or (
@@ -54,6 +56,7 @@ def update_trade_states(session, price_lookup: callable) -> List[Trade]:
             ):
                 trade.state = STATE_CLOSED
                 trade.exit_reason = "Target hit"
+                trade.exit_fill = price
                 trade.exited_at = datetime.utcnow()
                 updated.append(trade)
     session.commit()

@@ -1,103 +1,113 @@
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, date
+from typing import Any, Dict, Optional
+
+from sqlalchemy import JSON, Date, DateTime, Float, Integer, String, Text, Boolean
+from sqlalchemy.orm import Mapped, mapped_column
+
 from app.db import Base
 
 
-@dataclass
-class Universe:
-    date: str
-    tickers_json: List[str]
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    id: Optional[int] = None
+class Universe(Base):
+    __tablename__ = "universes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    tickers_json: Mapped[list[str]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
-@dataclass
-class Signal:
-    ticker: str
-    timeframe: str
-    setup_name: str
-    direction: str
-    score: int
-    regime: str
-    entry: float
-    stop: float
-    t1: float
-    t2: float
-    reasons_json: List[str]
-    features_json: Dict[str, Any]
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    id: Optional[int] = None
+class Signal(Base):
+    __tablename__ = "signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String, index=True)
+    timeframe: Mapped[str] = mapped_column(String(16))
+    setup_name: Mapped[str] = mapped_column(String(64))
+    direction: Mapped[str] = mapped_column(String(8))
+    score: Mapped[int] = mapped_column(Integer)
+    regime: Mapped[str] = mapped_column(String(16))
+    entry: Mapped[float] = mapped_column(Float)
+    stop: Mapped[float] = mapped_column(Float)
+    t1: Mapped[float] = mapped_column(Float)
+    t2: Mapped[float] = mapped_column(Float)
+    reasons_json: Mapped[list[str]] = mapped_column(JSON)
+    features_json: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
-@dataclass
-class OptionsPick:
-    signal_id: int
-    contract_symbol: Optional[str] = None
-    exp: Optional[str] = None
-    strike: Optional[float] = None
-    type: Optional[str] = None
-    delta: Optional[float] = None
-    iv: Optional[float] = None
-    bid: Optional[float] = None
-    ask: Optional[float] = None
-    last: Optional[float] = None
-    oi: Optional[int] = None
-    volume: Optional[int] = None
-    premium: Optional[float] = None
-    value_score: Optional[float] = None
-    status: Optional[str] = None
-    reject_reason: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    id: Optional[int] = None
+class OptionsPick(Base):
+    __tablename__ = "options_picks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    signal_id: Mapped[int] = mapped_column(Integer, index=True)
+    contract_symbol: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    exp: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    strike: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    type: Mapped[Optional[str]] = mapped_column(String(4), nullable=True)
+    delta: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    iv: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bid: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ask: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    oi: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    volume: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    premium: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    value_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
-@dataclass
-class Trade:
-    ticker: str
-    timeframe: str
-    setup_name: str
-    direction: str
-    state: str
-    entry_trigger: float
-    stop: float
-    t1: float
-    t2: float
-    entry_fill: Optional[float] = None
-    option_symbol: Optional[str] = None
-    opened_at: datetime = field(default_factory=datetime.utcnow)
-    entered_at: Optional[datetime] = None
-    exited_at: Optional[datetime] = None
-    exit_reason: Optional[str] = None
-    telegram_msg_ids_json: Optional[Dict[str, str]] = field(default_factory=dict)
-    id: Optional[int] = None
+class Trade(Base):
+    __tablename__ = "trades"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String, index=True)
+    timeframe: Mapped[str] = mapped_column(String(16))
+    setup_name: Mapped[str] = mapped_column(String(64))
+    direction: Mapped[str] = mapped_column(String(8))
+    state: Mapped[str] = mapped_column(String(32), index=True)
+    entry_trigger: Mapped[float] = mapped_column(Float)
+    stop: Mapped[float] = mapped_column(Float)
+    t1: Mapped[float] = mapped_column(Float)
+    t2: Mapped[float] = mapped_column(Float)
+    entry_fill: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    exit_fill: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    option_symbol: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    entered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    exited_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    exit_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    telegram_msg_ids_json: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
-@dataclass
-class AlertSent:
-    trade_id: int
-    alert_type: str
-    telegram_message_id: Optional[str] = None
-    sent_at: datetime = field(default_factory=datetime.utcnow)
-    payload_json: Optional[Dict[str, Any]] = None
-    id: Optional[int] = None
+class AlertSent(Base):
+    __tablename__ = "alerts_sent"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_id: Mapped[int] = mapped_column(Integer, index=True)
+    alert_type: Mapped[str] = mapped_column(String(32))
+    telegram_message_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    payload_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
 
-@dataclass
-class Outcome:
-    trade_id: int
-    max_favorable_move_pct: Optional[float] = None
-    max_adverse_move_pct: Optional[float] = None
-    notes_json: Optional[Dict[str, Any]] = None
-    id: Optional[int] = None
+class Outcome(Base):
+    __tablename__ = "outcomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_id: Mapped[int] = mapped_column(Integer, index=True)
+    max_favorable_move_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_adverse_move_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    notes_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
 
-# register in dummy metadata for cleanup
-Base.metadata.tables = {
-    Universe: [],
-    Signal: [],
-    OptionsPick: [],
-    Trade: [],
-    AlertSent: [],
-    Outcome: [],
-}
+class GovernorCooldown(Base):
+    __tablename__ = "governor_cooldowns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String, index=True, unique=True)
+    last_alert_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    alerts_today: Mapped[int] = mapped_column(Integer, default=0)
+    as_of_date: Mapped[date] = mapped_column(Date, index=True, default=date.today)
+    locked: Mapped[bool] = mapped_column(Boolean, default=False)
