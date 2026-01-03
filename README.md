@@ -68,7 +68,7 @@ Target hit.
 - **Implemented:** SQLAlchemy models with Postgres/SQLite via `DATABASE_URL`; stores universes, signals, trades, and state transitions.
 
 ### Safety & Guardrails
-- **Implemented:** Regular-trading-hours-only toggle (`ENABLE_RTH_ONLY`), per-ticker cooldowns, max alerts per ticker per day, and Telegram disable switch for dry runs.
+- **Implemented:** Regular-trading-hours-only toggle (`ENABLE_RTH_ONLY`), per-ticker cooldowns, max alerts per ticker per day, and a `TELEGRAM_ENABLED` switch for dry runs.
 - **Planned:** Per-ticker rate limiting beyond cooldowns and user-level permissions.
 - **Always:** "No financial advice" disclaimer baked into ops guidance.
 
@@ -97,7 +97,8 @@ Target hit.
 
 **Environment Variables**
 - `MASSIVE_API_KEY` / `MASSIVE_BASE_URL`: Market data access.
-- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`: Alert delivery; set `TELEGRAM_DISABLE=true` to mute.
+- `TELEGRAM_ENABLED`: Enable Telegram delivery when set to `true` (defaults to `false`).
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`: Alert delivery credentials.
 - `DATABASE_URL`: Postgres/SQLite connection string.
 - `ENABLE_RTH_ONLY`: Enforce regular-hours scans/state updates.
 - `ENV`, `ALERTS_ENABLED`, scoring/option thresholds (see `app/config.py`) for tuning.

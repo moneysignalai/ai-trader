@@ -38,7 +38,7 @@ def send_message_with_http_response(text: str) -> Dict[str, Any]:
             "response": "alerts-disabled",
             "message_id": "alerts-disabled",
         }
-    if settings.telegram_disable:
+    if not settings.telegram_enabled:
         logger.info("Telegram disabled. Message would be: %s", text)
         return {
             "ok": False,
