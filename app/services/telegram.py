@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any, Dict
 
@@ -30,6 +31,34 @@ def _truncate(value: Any, limit: int = 500) -> Any:
     if isinstance(value, str) and len(value) > limit:
         return value[:limit] + "..."
     return value
+
+
+def safe_log_extra(extra: Dict[Any, Any] | None) -> Dict[str, Any]:
+    """Ensure logging extras are JSON-safe primitives.
+
+    - Coerces keys to strings.
+    - Serializes dicts/lists/sets/tuples to compact JSON strings.
+    - Falls back to ``str(value)`` for any unsupported type.
+    """
+
+    if not extra:
+        return {}
+
+    safe: Dict[str, Any] = {}
+    for key, value in extra.items():
+        key_str = str(key)
+        if isinstance(value, (dict, list, tuple, set)):
+            try:
+                safe_value: Any = json.dumps(value, default=str, separators=(",", ":"))
+            except TypeError:
+                safe_value = str(value)
+        elif isinstance(value, (str, int, float, bool)) or value is None:
+            safe_value = value
+        else:
+            safe_value = str(value)
+        safe[key_str] = safe_value
+
+    return safe
 
 
 def send_message_with_http_response(text: str) -> Dict[str, Any]:
@@ -79,24 +108,28 @@ def send_or_log(text: str, context: Dict[str, Any]) -> Dict[str, Any]:
     """Send a message and log failures with context."""
 
     context = context or {}
-    logger.info("Sending Telegram alert", extra=context)
+    logger.info("Sending Telegram alert", extra=safe_log_extra(context))
     result = send_message_with_http_response(text)
     if not result.get("ok"):
         logger.error(
             "Telegram send failed",  # static message for easier filtering
-            extra={
-                **context,
-                "telegram_status_code": result.get("status_code"),
-                "telegram_response": _truncate(result.get("response")),
-            },
+            extra=safe_log_extra(
+                {
+                    **context,
+                    "telegram_status_code": result.get("status_code"),
+                    "telegram_response": _truncate(result.get("response")),
+                }
+            ),
         )
     else:
         logger.info(
             "Telegram send ok",
-            extra={
-                **context,
-                "telegram_status_code": result.get("status_code"),
-                "telegram_response": _truncate(result.get("response")),
-            },
+            extra=safe_log_extra(
+                {
+                    **context,
+                    "telegram_status_code": result.get("status_code"),
+                    "telegram_response": _truncate(result.get("response")),
+                }
+            ),
         )
     return result

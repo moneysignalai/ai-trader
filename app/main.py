@@ -44,6 +44,19 @@ app = FastAPI(title="AI Trader Alert Engine")
 Base.metadata.create_all(bind=engine)
 
 
+@app.middleware("http")
+async def log_request_exceptions(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "Unhandled exception during request method=%s path=%s",
+            request.method,
+            request.url.path,
+        )
+        raise
+
+
 def _within_rth() -> bool:
     return not settings.enable_rth_only or is_rth_now(settings)
 
