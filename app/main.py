@@ -72,6 +72,34 @@ def _detectors():
     ]
 
 
+def _find_signal_for_ticker(ticker: str, client: MassiveClient, min_score: float):
+    ohlcv = client.get_aggregates(ticker)
+    for candle in ohlcv:
+        candle["ticker"] = ticker
+    for detector in _detectors():
+        sig = detector.detect(ohlcv)
+        if not sig:
+            continue
+        scored = score_signal(sig)
+        sig.features["score"] = scored.total
+        logger.info(
+            "Signal candidate %s score=%s setup=%s", ticker, scored.total, sig.setup_name
+        )
+        if scored.total < min_score:
+            logger.info("Skipping %s due to MIN_SIGNAL_SCORE=%s", ticker, min_score)
+            continue
+        return sig, scored
+    return None
+
+
+def _top_reasons(scored, limit: int = 5):
+    reasons = [reason for reason in (getattr(scored, "reasons", []) or []) if reason]
+    components = getattr(scored, "components", {}) or {}
+    feature_notes = [f"{name}: {value:.1f}" for name, value in sorted(components.items(), key=lambda item: item[1], reverse=True)]
+    combined = reasons + feature_notes
+    return combined[:limit]
+
+
 @app.get("/")
 def root(request: Request):
     logger.info(
@@ -245,23 +273,10 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
         if time.monotonic() - start_time > settings.max_runtime_seconds:
             logger.info("Stopping scan after hitting runtime limit %ss", settings.max_runtime_seconds)
             break
-        ohlcv = client.get_aggregates(ticker)
-        # attach ticker
-        for candle in ohlcv:
-            candle["ticker"] = ticker
-        for detector in _detectors():
-            sig = detector.detect(ohlcv)
-            if sig:
-                scored = score_signal(sig)
-                sig.features["score"] = scored.total
-                logger.info("Signal candidate %s score=%s setup=%s", ticker, scored.total, sig.setup_name)
-                if scored.total < settings.min_signal_score:
-                    logger.info(
-                        "Skipping %s due to MIN_SIGNAL_SCORE=%s", ticker, settings.min_signal_score
-                    )
-                    continue
-                signals.append((sig, scored.total))
-                break
+        candidate = _find_signal_for_ticker(ticker, client, settings.min_signal_score)
+        if candidate:
+            sig, scored = candidate
+            signals.append((sig, scored.total))
         processed += 1
     if not signals:
         return {"message": "no signals"}
@@ -394,3 +409,120 @@ def debug_signals(session=Depends(get_session)):
         raise HTTPException(403, "forbidden")
     signals = session.execute(text("SELECT ticker,score FROM signals")).fetchall()
     return {"signals": [dict(row) for row in signals]}
+
+
+@app.post("/debug/force-alert")
+def debug_force_alert(
+    request: Request,
+    ticker: str,
+    min_score_override: float | None = None,
+    dry_run: bool = False,
+    session=Depends(get_session),
+):
+    if os.getenv("DEBUG_ENDPOINTS_ENABLED", "false").lower() != "true":
+        raise HTTPException(403, "forbidden")
+
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
+    logger.info("JOB START /debug/force-alert ticker=%s", ticker)
+
+    if not _within_rth():
+        return {"message": "outside RTH window"}
+
+    used_threshold = float(min_score_override) if min_score_override is not None else settings.min_signal_score
+    client = MassiveClient()
+
+    try:
+        candidate = _find_signal_for_ticker(ticker, client, used_threshold)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("JOB ERROR /debug/force-alert")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(exc)})
+
+    if not candidate:
+        response = {
+            "status": "no-signal",
+            "detail": "No setup qualified at the requested threshold.",
+            "used_threshold": used_threshold,
+        }
+        logger.info("JOB END /debug/force-alert result=%s", response)
+        return JSONResponse(status_code=404, content=response)
+
+    signal, scored = candidate
+    qualifies_normally = scored.total >= settings.min_signal_score
+    reasons = _top_reasons(scored)
+
+    option_snapshot = client.get_options_chain_snapshot(signal.ticker)
+    option_decision = select_option(signal, option_snapshot, underlying_price=signal.entry_trigger)
+    logger.info(
+        "Option decision for %s chosen=%s reason=%s",
+        signal.ticker,
+        bool(option_decision.contract),
+        option_decision.reason,
+    )
+    if option_decision.contract:
+        message = format_trade_idea_with_options(signal, option_decision.contract)
+    else:
+        message = format_trade_idea_stock_only(signal, option_decision.reason or "Options unavailable")
+
+    response_payload = {
+        "ticker": signal.ticker,
+        "score": scored.total,
+        "used_threshold": used_threshold,
+        "qualified_normally": qualifies_normally,
+        "reasons": reasons,
+        "components": scored.components,
+    }
+
+    if dry_run:
+        response_payload.update(
+            {
+                "status": "dry-run",
+                "alert_message": message,
+                "option_selected": bool(option_decision.contract),
+                "option_reason": option_decision.reason,
+                "signal": {
+                    "setup": signal.setup_name,
+                    "direction": signal.direction,
+                    "entry": signal.entry_trigger,
+                    "stop": signal.stop,
+                    "targets": signal.targets,
+                    "reasons": signal.reasons,
+                    "features": signal.features,
+                },
+            }
+        )
+        logger.info("JOB END /debug/force-alert result=%s", response_payload)
+        return response_payload
+
+    allowed, reason = allow_trade(session, signal.ticker)
+    if not allowed:
+        response_payload.update({"status": "blocked", "detail": reason})
+        logger.info("JOB END /debug/force-alert result=%s", response_payload)
+        return JSONResponse(status_code=429, content=response_payload)
+
+    send_result = send_or_log(
+        message,
+        context={
+            "endpoint": "/debug/force-alert",
+            "ticker": signal.ticker,
+            "request_id": request.headers.get("x-request-id"),
+        },
+    )
+    create_trade(
+        session,
+        signal,
+        option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
+    )
+
+    response_payload.update(
+        {
+            "status": "sent" if send_result.get("ok") else "error",
+            "telegram_status_code": send_result.get("status_code"),
+        }
+    )
+    logger.info("JOB END /debug/force-alert result=%s", response_payload)
+    return response_payload
