@@ -4,6 +4,7 @@ import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import text
 
 from app.config import get_settings, is_rth_now
@@ -23,6 +24,7 @@ from app.services.scoring import score_signal
 from app.services.governor import allow_trade
 from app.services.trade_state import create_trade, update_trade_states
 from app.services.options_selector import select_option
+from app.alerts.renderer import render_in_alert, render_out_alert
 from app.services.templates import (
     format_im_in,
     format_im_out,
@@ -30,6 +32,7 @@ from app.services.templates import (
     format_trade_idea_with_options,
 )
 from app.services.telegram import send_message_with_http_response, send_or_log
+from app.services.trade_events import record_trade_event
 from app.utils.dates import format_et_timestamp
 
 configure_logging()
@@ -112,6 +115,30 @@ def _top_reasons(scored, limit: int = 5):
     feature_notes = [f"{name}: {value:.1f}" for name, value in sorted(components.items(), key=lambda item: item[1], reverse=True)]
     combined = reasons + feature_notes
     return combined[:limit]
+
+
+def _instrument_type_from_trade(trade) -> str:
+    if getattr(trade, "option_symbol", None):
+        return "CALL" if getattr(trade, "direction", "bull") == "bull" else "PUT"
+    return "STOCK"
+
+
+class TradeInRequest(BaseModel):
+    ticker: str
+    instrument_type: str
+    fill_price: float
+    stop_price: float
+    plan: str | None = None
+    contract: dict | None = None
+
+
+class TradeOutRequest(BaseModel):
+    ticker: str
+    instrument_type: str
+    exit_price: float
+    pnl_pct: float | None = None
+    pnl_abs: float | None = None
+    reason: str | None = None
 
 
 @app.get("/")
@@ -250,6 +277,77 @@ def test_telegram(request: Request):
     return JSONResponse(status_code=500, content=response)
 
 
+@app.post("/trade/in")
+def trade_in(payload: TradeInRequest, request: Request, session=Depends(get_session)):
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
+    if not _within_rth():
+        return {"status": "blocked", "reason": "outside RTH"}
+
+    instrument_type = payload.instrument_type.upper()
+    alert = render_in_alert(
+        {
+            "ticker": payload.ticker,
+            "instrument_type": instrument_type,
+            "fill_price": payload.fill_price,
+            "stop_price": payload.stop_price,
+            "plan": payload.plan,
+        }
+    )
+    send_or_log(
+        alert,
+        context={"endpoint": "/trade/in", "ticker": payload.ticker},
+    )
+    record_trade_event(
+        session,
+        ticker=payload.ticker,
+        instrument_type=instrument_type,
+        side="in",
+        payload={"message": alert, "contract": payload.contract},
+    )
+    return {"status": "sent", "ticker": payload.ticker}
+
+
+@app.post("/trade/out")
+def trade_out(payload: TradeOutRequest, request: Request, session=Depends(get_session)):
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
+    if not _within_rth():
+        return {"status": "blocked", "reason": "outside RTH"}
+
+    instrument_type = payload.instrument_type.upper()
+    alert = render_out_alert(
+        {
+            "ticker": payload.ticker,
+            "instrument_type": instrument_type,
+            "exit_price": payload.exit_price,
+            "pnl_pct": payload.pnl_pct,
+            "pnl_abs": payload.pnl_abs,
+            "reason": payload.reason,
+        }
+    )
+    send_or_log(
+        alert,
+        context={"endpoint": "/trade/out", "ticker": payload.ticker},
+    )
+    record_trade_event(
+        session,
+        ticker=payload.ticker,
+        instrument_type=instrument_type,
+        side="out",
+        payload={"message": alert, "reason": payload.reason},
+    )
+    return {"status": "sent", "ticker": payload.ticker}
+
+
 @app.post("/universe/rebuild")
 def rebuild_universe(request: Request, session=Depends(get_session)):
     logger.info(
@@ -274,7 +372,7 @@ def rebuild_universe(request: Request, session=Depends(get_session)):
 
 def run_scan(timeframe: str, session, request_id: str | None = None):
     if not _within_rth():
-        return {"message": "outside RTH window"}
+        return {"message": "outside RTH"}
     client = MassiveClient()
     signals = []
     tickers = universe_service.latest_universe(session)
@@ -312,15 +410,33 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
         option_decision.reason,
     )
     if option_decision.contract:
+        instrument_type = "CALL" if signal.direction == "bull" else "PUT"
         message = format_trade_idea_with_options(signal, option_decision.contract)
     else:
-        message = format_trade_idea_stock_only(signal, option_decision.reason or "Options unavailable")
+        instrument_type = "STOCK"
+        stock_reasons = option_decision.fallback_reasons or [
+            "Options premiums elevated or expensive",
+            "Spread/liquidity not ideal",
+            "Cleaner risk with shares",
+        ]
+        message = format_trade_idea_stock_only(signal, stock_reasons)
     send_or_log(
         message,
         context={
             "endpoint": f"/scan/{timeframe}",
             "ticker": signal.ticker,
             "request_id": request_id,
+        },
+    )
+    record_trade_event(
+        session,
+        ticker=signal.ticker,
+        instrument_type=instrument_type,
+        side="idea",
+        payload={
+            "message": message,
+            "option_selected": bool(option_decision.contract),
+            "reason": option_decision.reason,
         },
     )
     create_trade(
@@ -366,7 +482,7 @@ def state_update(request: Request, session=Depends(get_session)):
     )
     logger.info("JOB START /state/update")
     if not _within_rth():
-        return {"message": "outside RTH window"}
+        return {"message": "outside RTH"}
     client = MassiveClient()
 
     def price_lookup(ticker: str):
@@ -374,12 +490,23 @@ def state_update(request: Request, session=Depends(get_session)):
         return snap.get("last", 0) or 0
     try:
         updated = update_trade_states(session, price_lookup)
+        if not settings.enable_follow_up_alerts:
+            response = {
+                "updated": len(updated),
+                "messages": 0,
+                "follow_up_alerts_enabled": False,
+            }
+            logger.info("JOB END /state/update result=%s", response)
+            return response
+
         messages = []
         for trade in updated:
+            instrument_type = _instrument_type_from_trade(trade)
             if trade.state == "IN_POSITION":
+                alert = format_im_in(trade)
                 messages.append(
                     send_or_log(
-                        format_im_in(trade),
+                        alert,
                         context={
                             "endpoint": "/state/update",
                             "ticker": trade.ticker,
@@ -387,16 +514,31 @@ def state_update(request: Request, session=Depends(get_session)):
                         },
                     )
                 )
+                record_trade_event(
+                    session,
+                    ticker=trade.ticker,
+                    instrument_type=instrument_type,
+                    side="in",
+                    payload={"message": alert},
+                )
             elif trade.state == "CLOSED":
+                alert = format_im_out(trade)
                 messages.append(
                     send_or_log(
-                        format_im_out(trade),
+                        alert,
                         context={
                             "endpoint": "/state/update",
                             "ticker": trade.ticker,
                             "request_id": request.headers.get("x-request-id"),
                         },
                     )
+                )
+                record_trade_event(
+                    session,
+                    ticker=trade.ticker,
+                    instrument_type=instrument_type,
+                    side="out",
+                    payload={"message": alert, "reason": trade.exit_reason},
                 )
         response = {"updated": len(updated), "messages": len(messages)}
         logger.info("JOB END /state/update result=%s", response)
@@ -445,7 +587,7 @@ def debug_force_alert(
     logger.info("JOB START /debug/force-alert ticker=%s", ticker)
 
     if not _within_rth():
-        return {"message": "outside RTH window"}
+        return {"message": "outside RTH"}
 
     used_threshold = float(min_score_override) if min_score_override is not None else settings.min_signal_score
     client = MassiveClient()
@@ -481,9 +623,16 @@ def debug_force_alert(
         option_decision.reason,
     )
     if option_decision.contract:
+        instrument_type = "CALL" if signal.direction == "bull" else "PUT"
         message = format_trade_idea_with_options(signal, option_decision.contract)
     else:
-        message = format_trade_idea_stock_only(signal, option_decision.reason or "Options unavailable")
+        instrument_type = "STOCK"
+        stock_reasons = option_decision.fallback_reasons or [
+            "Options premiums elevated or expensive",
+            "Spread/liquidity not ideal",
+            "Cleaner risk with shares",
+        ]
+        message = format_trade_idea_stock_only(signal, stock_reasons)
 
     response_payload = {
         "ticker": signal.ticker,
@@ -528,6 +677,13 @@ def debug_force_alert(
             "ticker": signal.ticker,
             "request_id": request.headers.get("x-request-id"),
         },
+    )
+    record_trade_event(
+        session,
+        ticker=signal.ticker,
+        instrument_type=instrument_type,
+        side="idea",
+        payload={"message": message, "option_selected": bool(option_decision.contract)},
     )
     create_trade(
         session,

@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, timedelta
 
+from app.alerts.renderer import render_option_alert
 from app.services.setups.base import SignalCandidate
 from app.services.templates import (
     format_im_in,
@@ -92,3 +93,29 @@ def test_im_in_includes_et_timestamp():
 def test_im_out_includes_et_timestamp():
     message = format_im_out(_sample_trade())
     _assert_alert_format(message)
+
+
+def test_render_option_alert_handles_missing_greeks():
+    message = render_option_alert(
+        {
+            "ticker": "TEST",
+            "setup": "breakout",
+            "confidence": 8.4,
+            "underlying_price": 101.2,
+            "contract": {
+                "symbol": "TESTC1",
+                "expiration": "2030-01-15",
+                "strike": 100,
+                "option_type": "call",
+                "bid": 1.0,
+                "ask": 1.2,
+                "open_interest": 1500,
+                "volume": 500,
+            },
+            "plan": {"entry": 1.1, "stop": 0.8, "targets": [1.5, 1.8], "notes": "No greeks provided"},
+        }
+    )
+
+    _assert_alert_format(message)
+    assert "Delta" not in message
+    assert "None" not in message
