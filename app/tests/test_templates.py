@@ -3,7 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.config import get_settings
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
 from app.services.setups.base import SignalCandidate
 from app.services.templates import (
     format_im_in,
@@ -44,13 +48,12 @@ def sample_trade():
     )
 
 
-@pytest.mark.parametrize("style", ["short", "medium", "deep"])
-def test_templates_plain_text(monkeypatch, sample_signal, sample_trade, style):
-    monkeypatch.setenv("ALERT_STYLE", style)
-    get_settings.cache_clear()
-
+def test_templates_plain_text(sample_signal, sample_trade):
     outputs = [
-        format_trade_idea_with_options(sample_signal, {"symbol": "TEST123", "expiration": "2024-12-20"}),
+        format_trade_idea_with_options(
+            sample_signal,
+            {"symbol": "TEST123", "expiration": "20-12-2024", "underlying_price": 100.0},
+        ),
         format_trade_idea_stock_only(sample_signal, "Options unavailable"),
         format_im_in(sample_trade),
         format_im_out(sample_trade),
@@ -60,6 +63,7 @@ def test_templates_plain_text(monkeypatch, sample_signal, sample_trade, style):
         assert isinstance(text, str)
         assert "**" not in text
         assert len(text) > 0
+        assert "YYYY-MM-DD" not in text
 
 
 def test_readme_has_no_placeholders():
@@ -67,30 +71,42 @@ def test_readme_has_no_placeholders():
     assert "..." not in content
 
 
-def test_medium_option_template_includes_key_fields(monkeypatch, sample_signal):
-    monkeypatch.setenv("ALERT_STYLE", "medium")
-    get_settings.cache_clear()
-
+def test_option_template_includes_pricing_lines(sample_signal):
     contract = {
         "symbol": "TEST123",
-        "expiration": "2024-12-20",
+        "expiration": "20-12-2024",
+        "expiration_iso": "2024-12-20",
         "strike": 100,
         "option_type": "call",
         "bid": 1.0,
         "ask": 1.2,
         "mid": 1.1,
-        "spread_pct": ((1.2 - 1.0) / 1.1) * 100,
+        "spread_pct": (1.2 - 1.0) / 1.1,
         "delta": 0.5,
         "iv": 0.45,
         "volume": 5000,
         "open_interest": 20000,
+        "underlying_price": 99.5,
     }
 
     message = format_trade_idea_with_options(sample_signal, contract)
 
     assert isinstance(message, str)
-    assert "Entry" in message
-    assert "Stop" in message
-    assert "Targets" in message
-    assert "Bid" in message and "Ask" in message
-    assert "Exp" in message and "Strike" in message
+    assert "Premium:" in message
+    assert "Spread:" in message
+    assert "Vol/OI:" in message
+    assert "Delta:" in message and "IV:" in message
+    assert "21-12-2024" not in message  # ensure DD-MM-YYYY formatting is used
+
+
+def test_alerts_do_not_show_iso_dates(sample_signal, sample_trade):
+    contract = {"symbol": "TEST123", "expiration": "2024-12-20", "strike": 100, "option_type": "call"}
+    outputs = [
+        format_trade_idea_with_options(sample_signal, contract),
+        format_trade_idea_stock_only(sample_signal, "Options unavailable"),
+        format_im_in(sample_trade),
+        format_im_out(sample_trade),
+    ]
+
+    for text in outputs:
+        assert "2024-" not in text

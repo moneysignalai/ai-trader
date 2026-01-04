@@ -9,28 +9,27 @@ AI Trader is an AI-first intelligence engine that scouts liquid markets, scores 
 - Publishes lifecycle alerts: Trade Idea, I'M IN, and I'M OUT.
 - Keeps risk defined with explicit entries, stops, targets, and trade states.
 
-## System Architecture (Map)
+## System Architecture & Intelligence Flow
 ```
-Market Data (Massive/Polygon)
-        |
-        v
-Universe Builder (Top Volume)
-        |
-        v
-Signal Engine (Setups + Scoring + Filters)
-        |
-        v
-Instrument Selector (Stock vs Options)
-        |
-        v
-Trade Lifecycle (watching -> in -> out) stored in DB
-        |
-        v
-Distribution (Telegram/Discord/Webhook)
+Market Data (Massive)
+        ↓
+Universe Builder (Liquidity + Volume)
+        ↓
+Signal Intelligence Engine (Context + Scoring)
+        ↓
+Instrument Selection (Options vs Stock)
+        ↓
+Trade Lifecycle Manager (Watching → In → Out)
+        ↓
+Distribution Channels (Telegram, Discord, Webhook)
 ```
 
-## Intelligence Flow
-The engine behaves like a disciplined trader: it starts with a liquid watchlist, gathers current context, and only advances ideas when multiple factors agree. Signals are filtered for confirmation and risk definition before choosing whether to express the trade via options or stock. Each alert carries the reasoning, pricing quality, and a clear status (waiting for trigger vs trigger hit), so operators can act with conviction.
+- **Market Data (Massive):** Streams option and equity snapshots as the factual base for every decision.
+- **Universe Builder:** Filters to liquid, high-volume names so downstream signals have tight spreads and depth.
+- **Signal Intelligence Engine:** Scores setups with contextual features (trend, momentum, structure) to mirror a confident discretionary trader.
+- **Instrument Selection:** Chooses between options and stock based on liquidity, spreads, moneyness, and quality of fills.
+- **Trade Lifecycle Manager:** Manages state transitions from watching → I'M IN → I'M OUT while keeping stops and targets explicit.
+- **Distribution Channels:** Delivers finished intelligence to Telegram, Discord, or webhooks. Delivery is modular; the core product is the decision engine.
 
 ## What the system does
 - Scans top-volume stocks and ETFs for high-conviction trade ideas.
@@ -43,44 +42,60 @@ The engine behaves like a disciplined trader: it starts with a liquid watchlist,
 Trade Idea (Options)
 ```
 🚨 TRADE IDEA — NVDA CALLS
-Confidence score: 88
-Entry 118.50 | Stop 116.40 | Targets 121.00 → 124.50
-Contract: Exp 2024-06-21 | Strike 100.00 | Type CALL | DTE 5
-Pricing: Mid 2.45 | Bid 2.35 / Ask 2.55 | Spread 8.16%
-Greeks/IV: Delta 0.55 | IV 45.00%
-Liquidity: Volume 12500 | OI 68420
-Reasons:
-- Pullback to VWAP with buyers defending
-- Trend intact with high-volume reclaim
-- Semis leading market strength
-Waiting for trigger
+
+Underlying: NVDA @ 118.50
+Contract: 21-06-2024 100.00C (DTE: 5)
+Premium: 2.45 mid (2.35 x 2.55) | Spread: 8.2%
+Vol/OI: 12500 / 68420
+Delta: 0.55 | IV: 45.0%
+
+Entry: 118.50
+Stop: 116.40
+Targets: 121.00 → 124.50
+
+Why I like it:
+• Pullback to VWAP with buyers defending
+• Trend intact with high-volume reclaim
+• Semis leading market strength
+
+Waiting for trigger.
 ```
 
 Trade Idea (Stock Only)
 ```
-🚨 TRADE IDEA — AMD STOCK
-Confidence score: 82
-Entry 154.20 | Stop 150.80 | Targets 158.00 → 162.50
-Reasons:
-- Bullish breakout with expanding volume
-- Holding above intraday support
-Plan: respect the stop, trim at first target, trail toward the second target.
-Waiting for trigger
+🚨 TRADE IDEA — AMD (STOCK)
+
+Entry: 154.20
+Stop: 150.80
+Targets: 158.00 → 162.50
+
+Why stock over options:
+• Options premiums elevated or illiquid
+• Cleaner risk with shares
+
+Plan is simple: respect the stop.
 ```
 
 I'M IN
 ```
 ✅ I'M IN — AMD CALLS
-Trigger hit at 154.30 (plan 154.20).
-Risk map: Stop 150.80 | Targets 158.00 → 162.50
-Plan: trim at first target, let a runner aim for the second with stop discipline.
+
+Entry filled: 154.30
+Stop: 150.80
+Targets: 158.00 → 162.50
+
+Staying with the plan.
 ```
 
 I'M OUT
 ```
-🏁 I'M OUT — AMD CALLS
-Target hit.
-Entry 154.20 | Exit 158.00 | Stop 150.80 | Targets 158.00 → 162.50 P/L≈3.80 (2.46%)
+🏁 I'M OUT — AMD
+
+Entry: 154.20
+Exit: 158.00
+Result: 2.5%
+
+Trade closed. Risk managed.
 ```
 
 ## Alert styles
@@ -106,6 +121,7 @@ Trading / behavior:
 - `UNIVERSE_SIZE`: Number of tickers to scan (default 20; recommended 500 for breadth).
 - `ENABLE_RTH_ONLY`: Restrict scans and updates to regular trading hours when true.
 - `ALERT_STYLE`: Alert verbosity (`short`, `medium`, `deep`).
+- Option selection guardrails (configurable): `OPT_MAX_MONEYNESS_PCT`, `OPT_MAX_SPREAD_PCT`, `OPT_MIN_DTE`, `OPT_MAX_DTE`, `OPT_MIN_VOLUME`, `OPT_MIN_OI`, `OPT_CALL_DELTA_MIN`, `OPT_CALL_DELTA_MAX`, `OPT_PUT_DELTA_MIN`, `OPT_PUT_DELTA_MAX`.
 
 ## Endpoints
 - `GET /health` — Liveness and DB connectivity check.
