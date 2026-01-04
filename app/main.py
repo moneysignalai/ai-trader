@@ -72,6 +72,23 @@ def _detectors():
     ]
 
 
+@app.get("/")
+def root(request: Request):
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
+
+    return {
+        "ok": True,
+        "service": "ai-trader",
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/health")
 def health(request: Request, session=Depends(get_session)):
     logger.info(
