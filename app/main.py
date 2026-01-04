@@ -76,7 +76,9 @@ def _detectors():
     ]
 
 
-def _find_signal_for_ticker(ticker: str, client: MassiveClient, min_score: float):
+def _find_signal_for_ticker(
+    ticker: str, client: MassiveClient, min_score: float, return_best: bool = False
+):
     raw_ohlcv = client.get_aggregates(ticker)
     ohlcv = []
 
@@ -93,6 +95,8 @@ def _find_signal_for_ticker(ticker: str, client: MassiveClient, min_score: float
         normalized["ticker"] = ticker
         ohlcv.append(normalized)
 
+    best_candidate = None
+    best_score = float("-inf")
     for detector in _detectors():
         sig = detector.detect(ohlcv)
         if not sig:
@@ -104,9 +108,12 @@ def _find_signal_for_ticker(ticker: str, client: MassiveClient, min_score: float
         )
         if scored.total < min_score:
             logger.info("Skipping %s due to MIN_SIGNAL_SCORE=%s", ticker, min_score)
+            if return_best and scored.total > best_score:
+                best_candidate = (sig, scored)
+                best_score = scored.total
             continue
         return sig, scored
-    return None
+    return best_candidate if return_best else None
 
 
 def _top_reasons(scored, limit: int = 5):
@@ -573,6 +580,7 @@ def debug_force_alert(
     ticker: str,
     min_score_override: float | None = None,
     dry_run: bool = False,
+    send_preview: bool = False,
     session=Depends(get_session),
 ):
     if os.getenv("DEBUG_ENDPOINTS_ENABLED", "false").lower() != "true":
@@ -586,14 +594,19 @@ def debug_force_alert(
     )
     logger.info("JOB START /debug/force-alert ticker=%s", ticker)
 
+    preview_reasons: list[str] = []
     if not _within_rth():
-        return {"message": "outside RTH"}
+        if not send_preview:
+            return {"message": "outside RTH"}
+        preview_reasons.append("Market closed (outside RTH)")
 
     used_threshold = float(min_score_override) if min_score_override is not None else settings.min_signal_score
     client = MassiveClient()
 
     try:
-        candidate = _find_signal_for_ticker(ticker, client, used_threshold)
+        candidate = _find_signal_for_ticker(
+            ticker, client, used_threshold, return_best=send_preview
+        )
     except ValueError as exc:
         logger.exception("JOB ERROR /debug/force-alert")
         return JSONResponse(status_code=400, content={"status": "error", "detail": str(exc)})
@@ -611,7 +624,7 @@ def debug_force_alert(
         return JSONResponse(status_code=404, content=response)
 
     signal, scored = candidate
-    qualifies_normally = scored.total >= settings.min_signal_score
+    qualifies_normally = scored.total >= used_threshold
     reasons = _top_reasons(scored)
 
     option_snapshot = client.get_options_chain_snapshot(signal.ticker)
@@ -664,11 +677,56 @@ def debug_force_alert(
         logger.info("JOB END /debug/force-alert result=%s", response_payload)
         return response_payload
 
-    allowed, reason = allow_trade(session, signal.ticker)
-    if not allowed:
+    failure_reasons = preview_reasons.copy()
+    if not qualifies_normally:
+        failure_reasons.append(
+            f"Score below threshold ({scored.total:.1f} < {used_threshold})"
+        )
+
+    mutate_governor = not (send_preview and (not qualifies_normally or preview_reasons))
+    allowed, reason = allow_trade(session, signal.ticker, mutate=mutate_governor)
+    if not allowed and reason:
+        failure_reasons.append(reason)
+    if not allowed and not send_preview:
         response_payload.update({"status": "blocked", "detail": reason})
         logger.info("JOB END /debug/force-alert result=%s", response_payload)
         return JSONResponse(status_code=429, content=response_payload)
+
+    should_send_preview = send_preview and (not qualifies_normally or not allowed or preview_reasons)
+
+    if should_send_preview:
+        snapshot = client.get_snapshot(signal.ticker) or {}
+        underlying_price = snapshot.get("last") or signal.entry_trigger
+        preview_context = {
+            "endpoint": "/debug/force-alert",
+            "ticker": signal.ticker,
+            "request_id": request.headers.get("x-request-id"),
+            "preview": True,
+        }
+        header_lines = [
+            "🧪 PREVIEW ALERT (NOT A LIVE TRADE)",
+            f"Reason: {failure_reasons[0] if failure_reasons else 'Unknown'}",
+            f"Ticker: {signal.ticker}",
+            f"Underlying: {underlying_price}",
+            f"Score: {scored.total:.1f}",
+            f"Used threshold: {used_threshold}",
+            "Failed gates:"
+            + ("\n" + "\n".join(f"- {r}" for r in failure_reasons[:3]) if failure_reasons else " none"),
+            f"Timestamp: {format_et_timestamp()}",
+            "",
+        ]
+        preview_message = "\n".join(header_lines) + message
+        send_result = send_or_log(preview_message, context=preview_context)
+        response_payload.update(
+            {
+                "status": "sent_preview" if send_result.get("ok") else "error",
+                "telegram_status_code": send_result.get("status_code"),
+                "qualified": False,
+                "top_failed_gates": failure_reasons[:3],
+            }
+        )
+        logger.info("JOB END /debug/force-alert result=%s", response_payload)
+        return response_payload
 
     send_result = send_or_log(
         message,
