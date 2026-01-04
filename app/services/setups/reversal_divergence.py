@@ -9,8 +9,13 @@ class ReversalDivergenceDetector(SetupDetector):
         if not ohlcv:
             return None
         last = ohlcv[-1]
-        if last.get("divergence"):
-            entry = last["close"]
+        close = last.get("close")
+        rsi_value = last.get("rsi14")
+        divergence = last.get("divergence")
+        if close is None:
+            return None
+        if divergence or (rsi_value is not None and rsi_value < 35 and last.get("above_vwap")):
+            entry = close
             stop = entry - 0.6
             targets = [entry + 0.6, entry + 1.0]
             return SignalCandidate(

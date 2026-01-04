@@ -9,7 +9,13 @@ class VwapReclaimDetector(SetupDetector):
         if not ohlcv:
             return None
         last = ohlcv[-1]
-        if last.get("above_vwap"):
+        prev = ohlcv[-2] if len(ohlcv) > 1 else None
+        vwap = last.get("vwap", last.get("close"))
+        close = last.get("close")
+        if vwap is None or close is None:
+            return None
+        reclaimed = last.get("above_vwap") and (prev is None or not prev.get("above_vwap"))
+        if reclaimed:
             entry = last["close"] + 0.05
             stop = last["close"] - 0.3
             targets = [entry + 0.4, entry + 0.8]
@@ -22,7 +28,7 @@ class VwapReclaimDetector(SetupDetector):
                 stop=stop,
                 targets=targets,
                 reasons=["VWAP reclaimed", "Momentum confirmed"],
-                features={"vwap_reclaim": 1},
+                features={"vwap_reclaim": 1, "momentum": (close - vwap)},
                 regime="TREND",
             )
         return None

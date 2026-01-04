@@ -108,20 +108,26 @@ Reason: target hit
 Timestamp: 06-14-2024 11:15 AM ET
 ```
 
-## Environment Variables
-Telegram is one delivery channel; the core product is AI signal intelligence.
+## Environment Variables & Tuning
+Telegram is one delivery channel; the core product is AI signal intelligence. Defaults in parentheses.
 
-- `ALERT_STYLE` — short/medium/deep copy tone.
-- `ENABLE_RTH_ONLY` — when true, alerts only publish between 9:30 AM–4:00 PM ET.
-- `ENABLE_FOLLOW_UP_ALERTS` — auto-send I'M IN / I'M OUT lifecycle alerts when trades update.
-- `ALERTS_ENABLED` — master switch for emitting alerts.
+- `ENABLE_RTH_ONLY` (true) — when true, alerts only publish between 9:30 AM–4:00 PM ET.
+- `ENABLE_FOLLOW_UP_ALERTS` (false) — auto-send I'M IN / I'M OUT lifecycle alerts when trades update.
+- `ALERTS_ENABLED` (true) — master switch for emitting alerts.
 - `TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram delivery controls.
 - `DATABASE_URL` — backing database for trades and events.
-- `MIN_SIGNAL_SCORE` — minimum score for a setup to alert.
-- `MAX_TICKERS_PER_RUN`, `MAX_RUNTIME_SECONDS` — scan limits.
-- `MAX_ALERTS_PER_RUN`, `ALERT_COOLDOWN_MINUTES`, `MAX_ALERTS_PER_TICKER_PER_DAY`, `COOLDOWN_MINUTES` — alert throttles.
-- `OPT_*` filters — option selection guards (moneyness, spreads, volume/OI, delta bands, DTE window, premium caps).
-- `MAX_PREMIUM_*`, `OPT_MIN_DTE`, `OPT_MAX_DTE` — pricing and timing limits for contracts.
+- `UNIVERSE_SIZE` (20) — how many tickers to evaluate each run.
+- `MAX_TICKERS_PER_RUN` (250) — cap on how many symbols `/scan/day` will process before exiting.
+- `MAX_RUNTIME_SECONDS` (40) — runtime guardrail for `/scan/day` based on wall-clock seconds.
+- `MAX_ALERTS_PER_RUN` (3) — how many alerts `/scan/day` can emit in one invocation.
+- `ALERT_COOLDOWN_MINUTES` (15) — suppress alerts for tickers alerted within this cooldown window.
+- `MIN_SIGNAL_SCORE` (78.0 by default) — minimum score for a setup to alert; accepts whole numbers or floats.
+- `MAX_ALERTS_PER_TICKER_PER_DAY` (3) and `COOLDOWN_MINUTES` (30) — governor limits for repeated alerts.
+- `OPT_MAX_MONEYNESS_PCT` (0.12), `OPT_MAX_SPREAD_PCT` (0.20), `OPT_MIN_DTE` (5), `OPT_MAX_DTE` (21), `OPT_MIN_VOLUME` (50), `OPT_MIN_OI` (200) — option selection guards.
+- `OPT_MAX_SPREAD_PCT`, `OPT_MAX_MONEYNESS_PCT` combine with `OPT_CALL_DELTA_*` and `OPT_PUT_DELTA_*` to fence contract quality.
+- `ALERT_STYLE` — short/medium/deep copy tone.
+- `DEBUG_ENDPOINTS_ENABLED` (false) — enables debug-only HTTP endpoints.
+- `MASSIVE_API_KEY`, `MASSIVE_BASE_URL` — Massive API auth (Authorization: Bearer <key>).
 
 ## Endpoints
 - `GET /health` — Liveness and DB connectivity check.
@@ -131,6 +137,7 @@ Telegram is one delivery channel; the core product is AI signal intelligence.
 - `POST /universe/rebuild` — Rebuilds the ticker universe for future scans.
 - `POST /test/telegram` — Sends a test message to verify Telegram delivery.
 - `POST /debug/force-alert` — Debug-only hook to run the `/scan/day` pipeline for a single ticker.
+- `GET /debug/explain` — Returns a dry-run explanation of a single ticker without sending Telegram.
 
 ### Using `/debug/force-alert`
 - Enable via `DEBUG_ENDPOINTS_ENABLED=true` (403 otherwise).
@@ -150,6 +157,16 @@ Telegram is one delivery channel; the core product is AI signal intelligence.
 - Preview example (sends a clearly labeled test alert even if it doesn't qualify):
   ```bash
   curl -X POST "https://<service>.onrender.com/debug/force-alert?ticker=SPY&min_score_override=3&send_preview=true"
+  ```
+
+### Using `/debug/explain`
+- Enable via `DEBUG_ENDPOINTS_ENABLED=true` (403 otherwise).
+- Query params:
+  - `ticker` (required) — symbol to inspect.
+- Behavior: fetches the same aggregates as `/scan/day`, enriches bars with VWAP/Bollinger/RSI/ATR/EMA features, evaluates detectors, and returns the best candidate with score, thresholds, top features, and failed gates. **No Telegram is sent.**
+- Example:
+  ```bash
+  curl "https://<service>.onrender.com/debug/explain?ticker=SPY"
   ```
 
 ## Cron jobs (Render)

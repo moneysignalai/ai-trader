@@ -27,13 +27,14 @@ class MassiveClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.client = httpx.Client(base_url=self.base_url, timeout=timeout)
+        self.headers = {"Authorization": f"Bearer {self.api_key}"}
 
     def _request(self, method: str, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         params = params or {}
         params.setdefault("apiKey", self.api_key)
         for attempt in range(1, self.max_retries + 1):
             try:
-                response = self.client.request(method, path, params=params)
+                response = self.client.request(method, path, params=params, headers=self.headers)
                 if response.status_code == 429:
                     retry_after = float(response.headers.get("Retry-After", "1"))
                     logger.warning("Rate limited on %s %s; sleeping for %ss", method, path, retry_after)
