@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 
 _ISO_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -47,4 +48,19 @@ def format_mmddyyyy(dt_value: date | datetime) -> str:
     if isinstance(dt_value, datetime):
         dt_value = dt_value.date()
     return dt_value.strftime("%m-%d-%Y")
+
+
+def format_mmddyyyy_time(dt_value: date | datetime, tz: str = "America/New_York") -> str:
+    if isinstance(dt_value, date) and not isinstance(dt_value, datetime):
+        dt_value = datetime.combine(dt_value, datetime.min.time())
+    if not isinstance(dt_value, datetime):
+        raise TypeError("dt_value must be a date or datetime instance")
+
+    zone = ZoneInfo(tz)
+    if dt_value.tzinfo is None:
+        dt_value = dt_value.replace(tzinfo=zone)
+    else:
+        dt_value = dt_value.astimezone(zone)
+
+    return dt_value.strftime("%m-%d-%Y %I:%M %p ET")
 
