@@ -170,6 +170,22 @@ Trading / behavior:
 - `POST /state/update` — Advances trade states and sends I'M IN or I'M OUT alerts.
 - `POST /universe/rebuild` — Rebuilds the ticker universe for future scans.
 - `POST /test/telegram` — Sends a test message to verify Telegram delivery.
+- `POST /debug/force-alert` — Debug-only hook to run the `/scan/day` pipeline for a single ticker.
+
+### Using `/debug/force-alert`
+- Enable via `DEBUG_ENDPOINTS_ENABLED=true` (403 otherwise).
+- Query params:
+  - `ticker` (required)
+  - `min_score_override` (optional float) to override `MIN_SIGNAL_SCORE` for this call only.
+  - `dry_run` (optional bool, default `false`) — when true, returns the alert payload without sending Telegram.
+- Behavior mirrors `/scan/day`: fetch Massive aggregates, score setups, pick options vs. stock, and format the real alert template.
+- Responses include the score, whether it clears the normal `MIN_SIGNAL_SCORE`, the threshold used, and the top reasons/features.
+- Example:
+  ```bash
+  curl -X POST \
+    "https://<service>.onrender.com/debug/force-alert?ticker=NVDA&dry_run=true&min_score_override=70" \
+    -H "Authorization: <your header if applicable>"
+  ```
 
 ## Cron jobs (Render)
 The service is designed to be triggered by Render Cron Jobs calling HTTP endpoints.
