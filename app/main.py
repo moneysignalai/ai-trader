@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime
+import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -236,13 +236,13 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
     client = MassiveClient()
     signals = []
     tickers = universe_service.latest_universe(session)
-    start_time = datetime.utcnow()
+    start_time = time.monotonic()
     processed = 0
     for ticker in tickers:
         if processed >= settings.max_tickers_per_run:
             logger.info("Stopping scan after hitting MAX_TICKERS_PER_RUN=%s", settings.max_tickers_per_run)
             break
-        if (datetime.utcnow() - start_time).total_seconds() > settings.max_runtime_seconds:
+        if time.monotonic() - start_time > settings.max_runtime_seconds:
             logger.info("Stopping scan after hitting runtime limit %ss", settings.max_runtime_seconds)
             break
         ohlcv = client.get_aggregates(ticker)
@@ -255,6 +255,11 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
                 scored = score_signal(sig)
                 sig.features["score"] = scored.total
                 logger.info("Signal candidate %s score=%s setup=%s", ticker, scored.total, sig.setup_name)
+                if scored.total < settings.min_signal_score:
+                    logger.info(
+                        "Skipping %s due to MIN_SIGNAL_SCORE=%s", ticker, settings.min_signal_score
+                    )
+                    continue
                 signals.append((sig, scored.total))
                 break
         processed += 1
@@ -263,6 +268,9 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
     # pick best signal
     signal, score = sorted(signals, key=lambda x: x[1], reverse=True)[0]
     logger.info("Top signal %s score=%s setup=%s", signal.ticker, score, signal.setup_name)
+    if settings.max_alerts_per_run <= 0:
+        logger.info("MAX_ALERTS_PER_RUN=%s prevents emitting alerts", settings.max_alerts_per_run)
+        return {"message": "alerts capped for this run"}
     allowed, reason = allow_trade(session, signal.ticker)
     if not allowed:
         return {"blocked": reason}
@@ -286,8 +294,12 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
             "request_id": request_id,
         },
     )
-    create_trade(session, signal, option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None)
-    return {"signal": signal.ticker, "score": score}
+    create_trade(
+        session,
+        signal,
+        option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
+    )
+    return {"signal": signal.ticker, "score": score, "alerts_sent": 1}
 
 
 @app.post("/scan/{tf}")
