@@ -33,6 +33,20 @@ def format_et_timestamp(dt: datetime | None = None) -> str:
     return dt.strftime("%m-%d-%Y %I:%M %p") + " ET"
 
 
+def et_today_date() -> date:
+    """Returns today's date in America/New_York."""
+
+    return datetime.now(ET).date()
+
+
+def iso_yyyy_mm_dd(d: date | datetime) -> str:
+    """Returns YYYY-MM-DD, normalizing datetimes into ET."""
+
+    if isinstance(d, datetime):
+        d = d.astimezone(ET).date()
+    return d.strftime("%Y-%m-%d")
+
+
 def normalize_any_date_to_mmddyyyy(date_str: str) -> str:
     """
     Accepts:

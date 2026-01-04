@@ -1,11 +1,13 @@
 import logging
 import time
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 from app.config import get_settings
 from app.services.options_normalize import normalize_snapshot_response
+from app.utils.dates import et_today_date, iso_yyyy_mm_dd
 
 
 logger = logging.getLogger(__name__)
@@ -62,15 +64,31 @@ class MassiveClient:
         to: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         params: Dict[str, Any] = {}
+
+        if frm is None or to is None:
+            today_et = et_today_date()
+            default_from = iso_yyyy_mm_dd(today_et - timedelta(days=7))
+            default_to = iso_yyyy_mm_dd(today_et)
+            frm = frm or default_from
+            to = to or default_to
+
+        if timespan == "minute" and limit is None:
+            limit = 5000
+
         if limit:
             params["limit"] = limit
         if frm:
             params["from"] = frm
         if to:
             params["to"] = to
-        path = f"/v2/aggs/ticker/{ticker}/range/{range}/{timespan}/{frm or '2024-01-01'}/{to or '2024-12-31'}"
+
+        path = f"/v2/aggs/ticker/{ticker}/range/{range}/{timespan}/{frm}/{to}"
         data = self._request("GET", path, params=params)
-        return data.get("results", []) if isinstance(data, dict) else []
+        results = data.get("results", []) if isinstance(data, dict) else []
+        logger.info(
+            "Aggregates window ticker=%s from=%s to=%s candles=%s", ticker, frm, to, len(results)
+        )
+        return results
 
     def get_snapshot(self, ticker: str) -> Dict[str, Any]:
         data = self._request("GET", f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}")
