@@ -29,7 +29,7 @@ from app.services.templates import (
     format_trade_idea_with_options,
 )
 from app.services.telegram import send_message_with_http_response, send_or_log
-from app.utils.dates import format_mmddyyyy_time
+from app.utils.dates import format_et_timestamp
 
 configure_logging()
 settings = get_settings()
@@ -108,7 +108,7 @@ def preflight(request: Request):
         "db_connected": db_connected,
         "enable_rth_only": _env_bool("ENABLE_RTH_ONLY", True),
         "universe_size": _env_int("UNIVERSE_SIZE", 20),
-        "service_time_utc": datetime.utcnow().strftime("%m-%d-%Y %H:%M:%S UTC"),
+        "service_time_et": format_et_timestamp(),
     }
 
 
@@ -121,12 +121,11 @@ def test_telegram(request: Request):
         request.headers.get("user-agent"),
     )
     logger.info("JOB START /test/telegram")
-    timestamp = format_mmddyyyy_time(datetime.now(), tz="America/New_York")
     message = (
         "🚨 TEST ALERT\n"
         "This is a system test.\n"
         "If you see this, Telegram integration is working.\n"
-        f"Timestamp: {timestamp}"
+        f"Timestamp: {format_et_timestamp()}"
     )
 
     def _truncate_response(resp: object) -> object:
