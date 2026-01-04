@@ -23,7 +23,7 @@ def allow_trade(session, ticker: str) -> tuple[bool, Optional[str]]:
             return False, "Ticker locked"
         if cooldown.as_of_date == date.today() and cooldown.alerts_today >= settings.max_alerts_per_ticker_per_day:
             return False, "Daily cap"
-        if (now - cooldown.last_alert_at) < timedelta(minutes=settings.ticker_cooldown_minutes):
+        if (now - cooldown.last_alert_at) < timedelta(minutes=settings.alert_cooldown_minutes):
             return False, "Cooling down"
         if cooldown.as_of_date != date.today():
             cooldown.alerts_today = 0

@@ -129,7 +129,39 @@ Trading / behavior:
 - `UNIVERSE_SIZE`: Number of tickers to scan (default 20; recommended 500 for breadth).
 - `ENABLE_RTH_ONLY`: Restrict scans and updates to regular trading hours when true.
 - `ALERT_STYLE`: Alert verbosity (`short`, `medium`, `deep`).
-- Option selection guardrails (configurable): `OPT_MAX_MONEYNESS_PCT` (0.12), `OPT_MAX_SPREAD_PCT` (0.20), `OPT_MIN_DTE` (5), `OPT_MAX_DTE` (21), `OPT_MIN_VOLUME` (50), `OPT_MIN_OI` (200), `OPT_CALL_DELTA_MIN` (0.20), `OPT_CALL_DELTA_MAX` (0.55), `OPT_PUT_DELTA_MIN` (-0.55), `OPT_PUT_DELTA_MAX` (-0.20).
+- See "Environment Variables & Tuning" for scan limits, alert throttles, signal thresholds, and option filters.
+
+## Environment Variables & Tuning
+
+### 1) Core runtime limits
+- **MAX_TICKERS_PER_RUN** (default: 500)  
+  Limits how many tickers are processed per `/scan/day` run. Lower values speed up scans and produce fewer alert candidates; higher values broaden coverage but take longer.
+- **MAX_RUNTIME_SECONDS** (default: 120)  
+  Wall-clock cap (using `time.monotonic`) for a scan before it aborts gracefully. Raising it allows more tickers to be evaluated; lowering it keeps the service responsive and reduces alert opportunities.
+
+### 2) Alert volume & cooldown
+- **MAX_ALERTS_PER_RUN** (default: 3)  
+  Caps how many alerts can be emitted in a single scan cycle. Decrease to cut down on alert volume; increase to allow more alerts when multiple tickers qualify.
+- **ALERT_COOLDOWN_MINUTES** (default: 5)  
+  Minimum minutes between alerts for the same ticker, persisted per ticker. Shorter cooldowns permit more frequent repeat alerts; longer cooldowns suppress duplicates and reduce noise.
+
+### 3) Signal thresholds
+- **MIN_SIGNAL_SCORE** (default: 78)  
+  Global minimum signal score required for alert eligibility. Raising the bar yields fewer, higher-quality alerts; lowering it increases alert frequency by admitting more borderline setups.
+
+### 4) Options contract filters
+- **OPT_MAX_MONEYNESS_PCT** (default: 0.12)  
+  Maximum distance from the underlying price for contracts to be considered. Higher values admit further out-of-the-money strikes (more alerts); lower values keep selections tighter to the money (fewer alerts).
+- **OPT_MAX_SPREAD_PCT** (default: 0.20)  
+  Maximum acceptable bid/ask spread percentage. Increasing tolerates wider spreads and can surface more contracts; decreasing demands tighter spreads and trims alertable contracts.
+- **OPT_MIN_DTE** (default: 5)  
+  Minimum days-to-expiration allowed. Lowering allows shorter-dated contracts (more alerts); raising prefers more time and can reduce alert candidates.
+- **OPT_MAX_DTE** (default: 21)  
+  Maximum days-to-expiration allowed. Raising includes longer-dated contracts (more alerts); lowering focuses on near-term contracts (fewer alerts).
+- **OPT_MIN_VOLUME** (default: 50)  
+  Minimum options volume before a contract is eligible. Lowering accepts thinner names (more alerts); raising enforces liquidity and cuts down alerts.
+- **OPT_MIN_OI** (default: 200)  
+  Minimum open interest required. Lower thresholds allow more contracts (more alerts); higher thresholds prioritize liquidity and reduce alerts.
 
 ## Endpoints
 - `GET /health` — Liveness and DB connectivity check.
