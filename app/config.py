@@ -36,7 +36,9 @@ class Settings:
         os.getenv("ALERT_COOLDOWN_MINUTES", os.getenv("TICKER_COOLDOWN_MINUTES", "5"))
     )
 
-    min_signal_score: int = int(os.getenv("MIN_SIGNAL_SCORE", os.getenv("MIN_SCORE_DAY", "78")))
+    min_signal_score: float = float(
+        os.getenv("MIN_SIGNAL_SCORE", os.getenv("MIN_SCORE_DAY", "78"))
+    )
     cooldown_minutes: int = int(os.getenv("COOLDOWN_MINUTES", "30"))
     max_alerts_per_ticker_per_day: int = int(os.getenv("MAX_ALERTS_PER_TICKER_PER_DAY", "3"))
 
