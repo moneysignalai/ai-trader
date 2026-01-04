@@ -107,7 +107,7 @@ def preflight(request: Request):
         "db_connected": db_connected,
         "enable_rth_only": _env_bool("ENABLE_RTH_ONLY", True),
         "universe_size": _env_int("UNIVERSE_SIZE", 20),
-        "service_time_utc": datetime.utcnow().isoformat() + "Z",
+        "service_time_utc": datetime.utcnow().strftime("%m-%d-%Y %H:%M:%S UTC"),
     }
 
 
@@ -120,7 +120,7 @@ def test_telegram(request: Request):
         request.headers.get("user-agent"),
     )
     logger.info("JOB START /test/telegram")
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now().strftime("%m-%d-%Y %H:%M:%S")
     message = (
         "🚨 TEST ALERT\n"
         "This is a system test.\n"

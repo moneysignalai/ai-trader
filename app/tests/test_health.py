@@ -25,4 +25,5 @@ def test_preflight_endpoint(monkeypatch):
     assert payload["db_connected"] is True
     assert payload["enable_rth_only"] is False
     assert payload["universe_size"] == 123
-    assert payload["service_time_utc"].endswith("Z")
+    assert payload["service_time_utc"].startswith(tuple(["0", "1"]))
+    assert "-" in payload["service_time_utc"]

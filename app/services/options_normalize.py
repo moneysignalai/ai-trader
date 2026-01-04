@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+from app.utils.dates import normalize_any_date_to_mmddyyyy
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -10,19 +11,15 @@ def _safe_float(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
 
-
-def _format_expiration(expiration: Any) -> tuple[Optional[str], Optional[str]]:
+def _format_expiration(expiration: Any) -> Optional[str]:
     if not expiration:
-        return None, None
+        return None
 
-    raw = str(expiration)
-    core = raw.split("T", 1)[0]
+    raw = str(expiration).split("T", 1)[0]
     try:
-        exp_date = datetime.fromisoformat(core).date()
+        return normalize_any_date_to_mmddyyyy(raw)
     except ValueError:
-        return core or None, core or None
-
-    return exp_date.strftime("%d-%m-%Y"), exp_date.isoformat()
+        return None
 
 
 def _compute_mid(bid: Optional[float], ask: Optional[float]) -> Optional[float]:
@@ -45,7 +42,7 @@ def normalize_massive_option_result(item: Dict[str, Any]) -> Dict[str, Any]:
     underlying = item.get("underlying_asset") or {}
     greeks = item.get("greeks") or {}
 
-    expiration_formatted, expiration_iso = _format_expiration(details.get("expiration_date"))
+    expiration_formatted = _format_expiration(details.get("expiration_date"))
 
     bid = _safe_float(last_quote.get("bid"))
     ask = _safe_float(last_quote.get("ask"))
@@ -56,9 +53,9 @@ def normalize_massive_option_result(item: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "symbol": details.get("ticker"),
         "option_type": details.get("contract_type"),
-        "strike": details.get("strike_price"),
+        "strike": _safe_float(details.get("strike_price")),
         "expiration": expiration_formatted,
-        "expiration_iso": expiration_iso,
+        "expiration_iso": expiration_formatted,
         "bid": bid,
         "ask": ask,
         "mid": mid,
@@ -67,7 +64,7 @@ def normalize_massive_option_result(item: Dict[str, Any]) -> Dict[str, Any]:
         "volume": day.get("volume"),
         "open_interest": item.get("open_interest"),
         "underlying": underlying.get("ticker"),
-        "underlying_price": underlying.get("price"),
+        "underlying_price": _safe_float(underlying.get("price")),
         "delta": greeks.get("delta"),
         "iv": item.get("implied_volatility"),
     }
