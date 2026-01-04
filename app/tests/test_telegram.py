@@ -22,4 +22,6 @@ def test_test_telegram_uses_mmddyyyy(monkeypatch):
     assert re.search(r"Timestamp: \d{2}-\d{2}-\d{4} \d{2}:\d{2} [AP]M ET", captured["message"])
     assert re.search(r"\b\d{2}-\d{2}-\d{4}\b", captured["message"])
     assert not re.search(r"\b\d{4}-\d{2}-\d{2}T", captured["message"])
+    assert not re.search(r":\d{2}:\d{2}", captured["message"])
+    assert not re.search(r"\.\d+", captured["message"])
     assert captured["message"].count("Timestamp:") == 1

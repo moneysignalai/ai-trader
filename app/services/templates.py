@@ -4,7 +4,13 @@ from typing import Iterable, List
 
 from app.config import get_settings
 from app.services.setups.base import SignalCandidate
-from app.utils.dates import normalize_any_date_to_mmddyyyy, parse_mmddyyyy
+from app.utils.dates import (
+    ET,
+    format_et_timestamp,
+    format_mmddyyyy,
+    normalize_any_date_to_mmddyyyy,
+    parse_mmddyyyy,
+)
 
 
 def _alert_style() -> str:
@@ -47,7 +53,7 @@ def _format_date(expiration: str | None, expiration_iso: str | None = None) -> s
     if not candidate:
         return "-"
     try:
-        return normalize_any_date_to_mmddyyyy(candidate)
+        return format_mmddyyyy(parse_mmddyyyy(candidate))
     except ValueError:
         return str(candidate)
 
@@ -58,7 +64,7 @@ def _dte(expiration_iso: str | None, expiration: str | None = None) -> str:
         return "-"
     try:
         exp_date = parse_mmddyyyy(candidate)
-        days = (exp_date - datetime.utcnow().date()).days
+        days = (exp_date - datetime.now(ET).date()).days
         return str(days)
     except ValueError:
         return "-"
@@ -141,6 +147,8 @@ def format_trade_idea_with_options(signal: SignalCandidate, contract: dict) -> s
             *[f"• {reason}" for reason in reasons],
             "",
             "Waiting for trigger.",
+            "",
+            f"Timestamp: {format_et_timestamp()}",
         ]
     )
 
@@ -166,6 +174,8 @@ def format_trade_idea_stock_only(signal: SignalCandidate, reason: str) -> str:
         "• Cleaner risk with shares",
         "",
         "Plan is simple: respect the stop.",
+        "",
+        f"Timestamp: {format_et_timestamp()}",
     ]
 
     return "\n".join(lines)
@@ -187,6 +197,8 @@ def format_im_in(trade) -> str:
         f"Targets: {t1} → {t2}",
         "",
         "Plan is live. Manage risk and let price work.",
+        "",
+        f"Timestamp: {format_et_timestamp()}",
     ]
 
     return "\n".join(lines)
@@ -212,6 +224,8 @@ def format_im_out(trade) -> str:
         f"Result: {_fmt_percent(pnl_pct) if pnl_pct is not None else '-'}",
         "",
         "Trade closed. Risk managed.",
+        "",
+        f"Timestamp: {format_et_timestamp()}",
     ]
 
     return "\n".join(lines)

@@ -59,6 +59,8 @@ Why I like it:
 • Semis leading market strength
 
 Waiting for trigger.
+ 
+Timestamp: 06-14-2024 09:30 AM ET
 ```
 
 Trade Idea (Stock Only)
@@ -74,6 +76,8 @@ Why stock over options:
 • Cleaner risk with shares
 
 Plan is simple: respect the stop.
+ 
+Timestamp: 06-14-2024 09:32 AM ET
 ```
 
 I'M IN
@@ -85,6 +89,8 @@ Stop: 150.80
 Targets: 158.00 → 162.50
 
 Staying with the plan.
+ 
+Timestamp: 06-14-2024 09:45 AM ET
 ```
 
 I'M OUT
@@ -96,6 +102,8 @@ Exit: 158.00
 Result: 2.5%
 
 Trade closed. Risk managed.
+ 
+Timestamp: 06-14-2024 11:15 AM ET
 ```
 
 ## Alert styles
