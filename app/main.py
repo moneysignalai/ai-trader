@@ -11,6 +11,7 @@ from app.logging_config import configure_logging
 from app.db import Base, engine, get_session
 from app import models
 from app.services import universe as universe_service
+from app.services.bars import normalize_bar
 from app.services.massive_client import MassiveClient
 from app.services.setups.trend_pullback import TrendPullbackDetector
 from app.services.setups.breakout_volume import BreakoutVolumeDetector
@@ -73,9 +74,22 @@ def _detectors():
 
 
 def _find_signal_for_ticker(ticker: str, client: MassiveClient, min_score: float):
-    ohlcv = client.get_aggregates(ticker)
-    for candle in ohlcv:
-        candle["ticker"] = ticker
+    raw_ohlcv = client.get_aggregates(ticker)
+    ohlcv = []
+
+    for bar in raw_ohlcv:
+        normalized = normalize_bar(bar)
+        missing = [
+            field for field in ("open", "high", "low", "close", "volume") if normalized.get(field) is None
+        ]
+        if missing:
+            sample_keys = sorted(bar.keys()) if isinstance(bar, dict) else []
+            raise ValueError(
+                f"Missing OHLCV field: {missing[0]} for ticker {ticker}; bar keys={sample_keys}"
+            )
+        normalized["ticker"] = ticker
+        ohlcv.append(normalized)
+
     for detector in _detectors():
         sig = detector.detect(ohlcv)
         if not sig:
@@ -438,6 +452,9 @@ def debug_force_alert(
 
     try:
         candidate = _find_signal_for_ticker(ticker, client, used_threshold)
+    except ValueError as exc:
+        logger.exception("JOB ERROR /debug/force-alert")
+        return JSONResponse(status_code=400, content={"status": "error", "detail": str(exc)})
     except Exception as exc:  # noqa: BLE001
         logger.exception("JOB ERROR /debug/force-alert")
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(exc)})
