@@ -138,6 +138,7 @@ Telegram is one delivery channel; the core product is AI signal intelligence.
   - `ticker` (required)
   - `min_score_override` (optional float) to override `MIN_SIGNAL_SCORE` for this call only.
   - `dry_run` (optional bool, default `false`) — when true, returns the alert payload without sending Telegram.
+  - `send_preview` (optional bool, default `false`) — when true, forces a Telegram preview even if the setup does not qualify (e.g., low score, market closed, or governor gate failed).
 - Behavior mirrors `/scan/day`: fetch Massive aggregates, score setups, pick options vs. stock, and format the real alert template.
 - Responses include the score, whether it clears the normal `MIN_SIGNAL_SCORE`, the threshold used, and the top reasons/features.
 - Example:
@@ -145,6 +146,10 @@ Telegram is one delivery channel; the core product is AI signal intelligence.
   curl -X POST \
     "https://<service>.onrender.com/debug/force-alert?ticker=NVDA&dry_run=true&min_score_override=70" \
     -H "Authorization: <your header if applicable>"
+  ```
+- Preview example (sends a clearly labeled test alert even if it doesn't qualify):
+  ```bash
+  curl -X POST "https://<service>.onrender.com/debug/force-alert?ticker=SPY&min_score_override=3&send_preview=true"
   ```
 
 ## Cron jobs (Render)
