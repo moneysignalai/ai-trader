@@ -1,5 +1,7 @@
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
+
 from app.services.options_selector import select_option
 from app.services.setups.base import SignalCandidate
 
@@ -24,6 +26,10 @@ def _signal(timeframe="day"):
 
 def test_select_option_picks_liquid():
     chain = json.loads(FIXTURE.read_text())
+    soon = (datetime.utcnow().date() + timedelta(days=10)).isoformat()
+    for leg in chain["results"]:
+        leg["expiration_iso"] = soon
+        leg["expiration"] = soon
     decision = select_option(_signal("day"), chain, underlying_price=100)
     assert decision.contract
     assert decision.contract["symbol"] == "TESTC1"
@@ -31,6 +37,10 @@ def test_select_option_picks_liquid():
 
 def test_rejects_if_no_liquidity():
     chain = json.loads(FIXTURE.read_text())
+    soon = (datetime.utcnow().date() + timedelta(days=10)).isoformat()
+    for c in chain["results"]:
+        c["expiration_iso"] = soon
+        c["expiration"] = soon
     # zero out liquidity
     for c in chain["results"]:
         c["open_interest"] = 0

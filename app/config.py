@@ -60,6 +60,17 @@ class Settings:
     max_bid_ask_spread_pct: float = float(os.getenv("MAX_BID_ASK_SPREAD_PCT", "0.25"))
     max_bid_ask_spread_abs: float = float(os.getenv("MAX_BID_ASK_SPREAD_ABS", "1.00"))
 
+    opt_max_moneyness_pct: float = float(os.getenv("OPT_MAX_MONEYNESS_PCT", "0.12"))
+    opt_max_spread_pct: float = float(os.getenv("OPT_MAX_SPREAD_PCT", "0.20"))
+    opt_min_dte: int = int(os.getenv("OPT_MIN_DTE", "5"))
+    opt_max_dte: int = int(os.getenv("OPT_MAX_DTE", "21"))
+    opt_min_volume: int = int(os.getenv("OPT_MIN_VOLUME", "50"))
+    opt_min_oi: int = int(os.getenv("OPT_MIN_OI", "200"))
+    opt_call_delta_min: float = float(os.getenv("OPT_CALL_DELTA_MIN", "0.20"))
+    opt_call_delta_max: float = float(os.getenv("OPT_CALL_DELTA_MAX", "0.55"))
+    opt_put_delta_min: float = float(os.getenv("OPT_PUT_DELTA_MIN", "-0.55"))
+    opt_put_delta_max: float = float(os.getenv("OPT_PUT_DELTA_MAX", "-0.20"))
+
     max_premium_scalp: float = float(os.getenv("MAX_PREMIUM_SCALP", "0.80"))
     max_premium_day: float = float(os.getenv("MAX_PREMIUM_DAY", "2.50"))
     max_premium_swing: float = float(os.getenv("MAX_PREMIUM_SWING", "6.00"))
