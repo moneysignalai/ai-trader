@@ -146,8 +146,8 @@ Trading / behavior:
   Minimum minutes between alerts for the same ticker, persisted per ticker. Shorter cooldowns permit more frequent repeat alerts; longer cooldowns suppress duplicates and reduce noise.
 
 ### 3) Signal thresholds
-- **MIN_SIGNAL_SCORE** (default: 78)  
-  Global minimum signal score required for alert eligibility. Raising the bar yields fewer, higher-quality alerts; lowering it increases alert frequency by admitting more borderline setups.
+- **MIN_SIGNAL_SCORE** (default: 78.0)
+  Global minimum signal score required for alert eligibility. Parsed as a float to allow decimal thresholds; raising the bar yields fewer, higher-quality alerts, while lowering it increases alert frequency by admitting more borderline setups.
 
 ### 4) Options contract filters
 - **OPT_MAX_MONEYNESS_PCT** (default: 0.12)  
