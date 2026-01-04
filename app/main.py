@@ -29,6 +29,7 @@ from app.services.templates import (
     format_trade_idea_with_options,
 )
 from app.services.telegram import send_message_with_http_response, send_or_log
+from app.utils.dates import format_mmddyyyy_time
 
 configure_logging()
 settings = get_settings()
@@ -120,7 +121,7 @@ def test_telegram(request: Request):
         request.headers.get("user-agent"),
     )
     logger.info("JOB START /test/telegram")
-    timestamp = datetime.now().strftime("%m-%d-%Y %H:%M:%S")
+    timestamp = format_mmddyyyy_time(datetime.now(), tz="America/New_York")
     message = (
         "🚨 TEST ALERT\n"
         "This is a system test.\n"
