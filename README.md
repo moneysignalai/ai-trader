@@ -31,6 +31,39 @@ Distribution Channels (Telegram, Discord, Webhook)
 - **Trade Lifecycle Manager:** Manages state transitions from watching → I'M IN → I'M OUT while keeping stops and targets explicit.
 - **Distribution Channels:** Delivers finished intelligence to Telegram, Discord, or webhooks. Delivery is modular; the core product is the decision engine.
 
+## System Architecture (Technical Overview)
+```mermaid
+flowchart LR
+  A[Market Data Provider<br/>Massive API: equities + options] --> B[Worker Scanner<br/>Universe + bar fetch + feature enrichment]
+  B --> C[Flagship Strategy + Gating<br/>Setups + scoring + thresholds]
+  C -->|Meets thresholds| D[Options Optimizer<br/>Contract selection + affordability filters]
+  D --> E[Alert Builder<br/>Templates + rationale + risk levels]
+
+  E --> F[(PostgreSQL<br/>Universe + scans + alert history)]
+  E --> G[Delivery<br/>Telegram now • Discord later]
+
+  F --> H[FastAPI for review / ops<br/>Health • Debug • Explain • Metrics]
+  H --> I[Operators & Monitoring<br/>Logs • Dashboards • Error triage]
+```
+
+- **Market Data Provider (Massive API):** Pulls consolidated equity and options data to feed all downstream calculations without channel coupling.
+- **Worker Scanner:** Builds the liquid universe, fetches bars, and enriches them with VWAP, EMA, RSI, Bollinger Bands, ATR, and volatility ratios so detectors operate on curated features.
+- **Flagship Strategy + Gating:** Runs setup detectors, applies scoring and thresholds, and enforces AI-driven gating instead of delivery-driven rules to decide if a ticker is viable.
+- **Options Optimizer:** Picks contracts with affordability and quality filters (DTE bounds, spread %, open interest/volume, moneyness) to keep fills realistic.
+- **Alert Builder:** Formats ALERT_STYLE templates with rationale, risk levels, and decision context before handing off to persistence and delivery.
+- **PostgreSQL:** Stores the tracked universe, scan snapshots, and alert history for reproducibility and operator audits.
+- **Delivery:** Sends alerts to Telegram today with a clean path to Discord or other channels later; distribution is separate from intelligence.
+- **FastAPI for review / ops:** Exposes health, debug, explainability, and metrics endpoints so operators can interrogate the pipeline.
+- **Operators & Monitoring:** Consumes logs, dashboards, and error triage hooks to keep runs healthy and observable.
+
+**Why this architecture works:** Governance levers (scores, thresholds, governor env vars), throttles, and cooldowns prevent noisy outputs; every step persists to Postgres for reproducibility; and FastAPI/ops endpoints let operators audit, pause, or rerun flows without touching delivery channels.
+
+### Architecture Notes
+- Data normalization layer reconciles Polygon-like fields with Massive fields before feature enrichment.
+- All surfaced timestamps are formatted in Eastern Time as `MM-DD-YYYY HH:MM AM/PM ET` for consistency across alerts and dashboards.
+- Governance environment variables: `MAX_TICKERS_PER_RUN`, `MAX_RUNTIME_SECONDS`, `MAX_ALERTS_PER_RUN`, `ALERT_COOLDOWN_MINUTES`, `MIN_SIGNAL_SCORE` keep scans bounded and repeatable.
+- Telegram enable switch: `TELEGRAM_ENABLED` guards delivery; the intelligence layer remains channel-agnostic.
+
 ## What the system does
 - Scans top-volume stocks and ETFs for high-conviction trade ideas.
 - Generates CALL and PUT option plans when contracts are liquid and fairly priced.
