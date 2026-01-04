@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
@@ -18,13 +18,15 @@ def format_mmddyyyy(d: date | datetime) -> str:
 def format_et_timestamp(dt: datetime | None = None) -> str:
     """
     Returns: MM-DD-YYYY HH:MM AM/PM ET
-    Example: 01-04-2026 12:52 AM ET
+    Uses real timezone conversion (no naive replace).
     """
     if dt is None:
-        dt = datetime.now(ET)
+        # ALWAYS start in UTC then convert to ET to avoid server-local ambiguity
+        dt = datetime.now(timezone.utc).astimezone(ET)
     else:
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=ET)
+            # If naive, assume UTC (NOT ET) then convert
+            dt = dt.replace(tzinfo=timezone.utc).astimezone(ET)
         else:
             dt = dt.astimezone(ET)
 
