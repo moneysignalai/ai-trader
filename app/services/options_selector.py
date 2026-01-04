@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import date
+from datetime import date
 from typing import Dict, Optional
 
 from app.config import get_settings
@@ -8,10 +9,17 @@ from app.utils.dates import et_today_date, normalize_any_date_to_mmddyyyy, parse
 
 
 class OptionDecision:
-    def __init__(self, contract: Optional[Dict], value_score: float, reason: Optional[str] = None):
+    def __init__(
+        self,
+        contract: Optional[Dict],
+        value_score: float,
+        reason: Optional[str] = None,
+        fallback_reasons: Optional[list[str]] = None,
+    ):
         self.contract = contract
         self.value_score = value_score
         self.reason = reason
+        self.fallback_reasons = fallback_reasons or []
 
 def _parse_expiration(contract: Dict) -> Optional[date]:
     raw = contract.get("expiration_iso") or contract.get("expiration")
@@ -38,11 +46,13 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
     desired_type = "call" if signal.direction == "bull" else "put"
     now = et_today_date()
 
+    fallback_reasons: set[str] = set()
+
     if underlying_price is None:
-        return OptionDecision(None, 0, reason="Missing underlying price")
+        return OptionDecision(None, 0, reason="Missing underlying price", fallback_reasons=["Cleaner risk with shares"])
 
     if not settings.options_enabled:
-        return OptionDecision(None, 0, reason="Options disabled")
+        return OptionDecision(None, 0, reason="Options disabled", fallback_reasons=["Options premiums elevated or expensive"])
 
     score_raw = signal.features.get("score") if isinstance(signal.features, dict) else None
     try:
@@ -51,7 +61,7 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
         score_value = 0.0
 
     if score_value < settings.options_only_if_score_at_least:
-        return OptionDecision(None, 0, reason="Score below options threshold")
+        return OptionDecision(None, 0, reason="Score below options threshold", fallback_reasons=["Cleaner risk with shares"])
 
     legs = chain_snapshot.get("results", []) if isinstance(chain_snapshot, dict) else []
     candidates = []
@@ -69,6 +79,7 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
 
         moneyness_pct = abs(float(strike) - float(underlying_price)) / float(underlying_price)
         if moneyness_pct > settings.opt_max_moneyness_pct:
+            fallback_reasons.add("Options premiums elevated or expensive")
             continue
 
         exp_date = _parse_expiration(leg)
@@ -76,6 +87,7 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
             continue
         dte = (exp_date - now).days
         if dte < settings.opt_min_dte or dte > settings.opt_max_dte:
+            fallback_reasons.add("DTE not in sweet spot")
             continue
 
         bid = leg.get("bid")
@@ -87,11 +99,13 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
         if spread is None:
             spread = _spread_ratio(bid, ask, mid)
         if spread is None or spread > settings.opt_max_spread_pct:
+            fallback_reasons.add("Spread/liquidity not ideal")
             continue
 
         volume = leg.get("volume") or 0
         open_interest = leg.get("open_interest") or 0
         if volume < settings.opt_min_volume and open_interest < settings.opt_min_oi:
+            fallback_reasons.add("Spread/liquidity not ideal")
             continue
 
         delta = leg.get("delta")
@@ -121,7 +135,8 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
         )
 
     if not candidates:
-        return OptionDecision(None, 0, reason="Options too expensive or illiquid")
+        human_reasons = list(fallback_reasons) if fallback_reasons else ["Options too expensive or illiquid"]
+        return OptionDecision(None, 0, reason="Options too expensive or illiquid", fallback_reasons=human_reasons)
 
     best = sorted(
         candidates,

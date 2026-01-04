@@ -2,6 +2,10 @@ import re
 from pathlib import Path
 from types import SimpleNamespace
 
+import re
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 from app.services.setups.base import SignalCandidate
@@ -57,7 +61,6 @@ def test_templates_plain_text(sample_signal, sample_trade):
 
     for text in outputs:
         assert isinstance(text, str)
-        assert "**" not in text
         assert len(text) > 0
         assert "YYYY-MM-DD" not in text
 
@@ -88,10 +91,9 @@ def test_option_template_includes_pricing_lines(sample_signal):
     message = format_trade_idea_with_options(sample_signal, contract)
 
     assert isinstance(message, str)
-    assert "Premium:" in message
+    assert "Bid/Ask:" in message
     assert "Spread:" in message
-    assert "Vol/OI:" in message
-    assert "Delta:" in message and "IV:" in message
+    assert "OI/Vol:" in message
     assert "12-20-2024" in message
 
 

@@ -111,3 +111,15 @@ class GovernorCooldown(Base):
     alerts_today: Mapped[int] = mapped_column(Integer, default=0)
     as_of_date: Mapped[date] = mapped_column(Date, index=True, default=date.today)
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class TradeEvent(Base):
+    __tablename__ = "trade_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String, index=True)
+    instrument_type: Mapped[str] = mapped_column(String(16))
+    side: Mapped[str] = mapped_column(String(16))
+    payload_json: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at_et_text: Mapped[str] = mapped_column(Text, nullable=False)

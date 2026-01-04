@@ -85,6 +85,7 @@ class Settings:
     telegram_enabled: bool = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
     alerts_enabled: bool = os.getenv("ALERTS_ENABLED", "true").lower() == "true"
     alert_style: str = os.getenv("ALERT_STYLE", "medium")
+    enable_follow_up_alerts: bool = os.getenv("ENABLE_FOLLOW_UP_ALERTS", "false").lower() == "true"
 
 
 @lru_cache()

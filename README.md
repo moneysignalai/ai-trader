@@ -38,130 +38,90 @@ Distribution Channels (Telegram, Discord, Webhook)
 - Defines entry, stop, and target levels for every idea and tracks lifecycle events.
 - Publishes alerts to interchangeable channels (Telegram, Discord, webhook, etc.).
 
-## Example Alerts (Medium Style)
-Trade Idea (Options)
-```
-🚨 TRADE IDEA — NVDA CALLS
+## Alert Formats (Trader-grade)
+All timestamps surface as `MM-DD-YYYY HH:MM AM/PM ET`. Examples below use the standardized templates delivered to Telegram (or any other channel).
 
-Underlying: NVDA @ 118.50
-Contract: 06-21-2024 100.00C (DTE: 5)
-Premium: 2.45 mid (2.35 x 2.55) | Spread: 8.2%
-Vol/OI: 12500 / 68420
-Delta: 0.55 | IV: 45.0%
-
-Entry: 118.50
-Stop: 116.40
-Targets: 121.00 → 124.50
-
-Why I like it:
-• Pullback to VWAP with buyers defending
-• Trend intact with high-volume reclaim
-• Semis leading market strength
-
-Waiting for trigger.
- 
-Timestamp: 06-14-2024 09:30 AM ET
-```
-
-Trade Idea (Stock Only)
+Stock Trade Idea
 ```
 🚨 TRADE IDEA — AMD (STOCK)
 
+Direction: Long
+Market Context: pullback
+
 Entry: 154.20
-Stop: 150.80
-Targets: 158.00 → 162.50
+Stop: 150.80  (3.40 risk)
+Targets:
+• T1: 158.00
+• T2: 162.50
 
 Why stock over options:
-• Options premiums elevated or illiquid
+• Options premiums elevated or expensive
+• Spread/liquidity not ideal
 • Cleaner risk with shares
 
-Plan is simple: respect the stop.
- 
+Execution Plan:
+Respect the stop and scale only at targets.
+
 Timestamp: 06-14-2024 09:32 AM ET
 ```
 
-I'M IN
+Options Trade Idea
 ```
-✅ I'M IN — AMD CALLS
+🚨 TRADE IDEA — NVDA (CALL)
 
-Entry filled: 154.30
-Stop: 150.80
-Targets: 158.00 → 162.50
+Underlying: 118.50
+Setup: breakout
+Confidence: 8.8/10
 
-Staying with the plan.
- 
+Contract:
+• NVDA 120.00C
+• Exp: 06-21-2024
+• Mid: 2.45
+• Bid/Ask: 2.35 / 2.55
+• OI/Vol: 68420 / 12500
+• Spread: 8.2%
+
+Plan:
+Entry: 2.45
+Stop: 2.05
+Targets: 3.10 → 3.60
+Notes: Watch volume and respect stops.
+
+Timestamp: 06-14-2024 09:30 AM ET
+```
+
+I'M IN (follow-up)
+```
+✅ I'M IN — AMD (STOCK)
+Fill: 154.30
+Risk: 150.80 (hard stop)
+Plan: Trade live. Hard stop stays in.
 Timestamp: 06-14-2024 09:45 AM ET
 ```
 
-I'M OUT
+I'M OUT (follow-up)
 ```
-🏁 I'M OUT — AMD
-
-Entry: 154.20
+🏁 I'M OUT — AMD (CALL)
 Exit: 158.00
-Result: 2.5%
-
-Trade closed. Risk managed.
- 
+Result: 12.0% (0.18)
+Reason: target hit
 Timestamp: 06-14-2024 11:15 AM ET
 ```
 
-## Alert styles
-`ALERT_STYLE` controls message verbosity only and does not require code changes:
-- `short`
-- `medium` (default)
-- `deep`
+## Environment Variables
+Telegram is one delivery channel; the core product is AI signal intelligence.
 
-If the value is unset or invalid, the system defaults to `medium`.
-
-## Environment variables
-Required:
-- `DATABASE_URL`: Postgres connection string.
-- `MASSIVE_API_KEY`: Massive API key for market data.
-- `MASSIVE_BASE_URL`: Massive API base URL.
-
-Telegram (one of several output channels):
-- `TELEGRAM_ENABLED`: Enable Telegram delivery when true; false disables sending but logs attempts as "telegram-disabled".
-- `TELEGRAM_BOT_TOKEN`: Bot token used to send messages.
-- `TELEGRAM_CHAT_ID`: Chat to receive alerts.
-
-Trading / behavior:
-- `UNIVERSE_SIZE`: Number of tickers to scan (default 20; recommended 500 for breadth).
-- `ENABLE_RTH_ONLY`: Restrict scans and updates to regular trading hours when true.
-- `ALERT_STYLE`: Alert verbosity (`short`, `medium`, `deep`).
-- See "Environment Variables & Tuning" for scan limits, alert throttles, signal thresholds, and option filters.
-
-## Environment Variables & Tuning
-
-### 1) Core runtime limits
-- **MAX_TICKERS_PER_RUN** (default: 500)  
-  Limits how many tickers are processed per `/scan/day` run. Lower values speed up scans and produce fewer alert candidates; higher values broaden coverage but take longer.
-- **MAX_RUNTIME_SECONDS** (default: 120)  
-  Wall-clock cap (using `time.monotonic`) for a scan before it aborts gracefully. Raising it allows more tickers to be evaluated; lowering it keeps the service responsive and reduces alert opportunities.
-
-### 2) Alert volume & cooldown
-- **MAX_ALERTS_PER_RUN** (default: 3)  
-  Caps how many alerts can be emitted in a single scan cycle. Decrease to cut down on alert volume; increase to allow more alerts when multiple tickers qualify.
-- **ALERT_COOLDOWN_MINUTES** (default: 5)  
-  Minimum minutes between alerts for the same ticker, persisted per ticker. Shorter cooldowns permit more frequent repeat alerts; longer cooldowns suppress duplicates and reduce noise.
-
-### 3) Signal thresholds
-- **MIN_SIGNAL_SCORE** (default: 78.0)
-  Global minimum signal score required for alert eligibility. Parsed as a float to allow decimal thresholds; raising the bar yields fewer, higher-quality alerts, while lowering it increases alert frequency by admitting more borderline setups.
-
-### 4) Options contract filters
-- **OPT_MAX_MONEYNESS_PCT** (default: 0.12)  
-  Maximum distance from the underlying price for contracts to be considered. Higher values admit further out-of-the-money strikes (more alerts); lower values keep selections tighter to the money (fewer alerts).
-- **OPT_MAX_SPREAD_PCT** (default: 0.20)  
-  Maximum acceptable bid/ask spread percentage. Increasing tolerates wider spreads and can surface more contracts; decreasing demands tighter spreads and trims alertable contracts.
-- **OPT_MIN_DTE** (default: 5)  
-  Minimum days-to-expiration allowed. Lowering allows shorter-dated contracts (more alerts); raising prefers more time and can reduce alert candidates.
-- **OPT_MAX_DTE** (default: 21)  
-  Maximum days-to-expiration allowed. Raising includes longer-dated contracts (more alerts); lowering focuses on near-term contracts (fewer alerts).
-- **OPT_MIN_VOLUME** (default: 50)  
-  Minimum options volume before a contract is eligible. Lowering accepts thinner names (more alerts); raising enforces liquidity and cuts down alerts.
-- **OPT_MIN_OI** (default: 200)  
-  Minimum open interest required. Lower thresholds allow more contracts (more alerts); higher thresholds prioritize liquidity and reduce alerts.
+- `ALERT_STYLE` — short/medium/deep copy tone.
+- `ENABLE_RTH_ONLY` — when true, alerts only publish between 9:30 AM–4:00 PM ET.
+- `ENABLE_FOLLOW_UP_ALERTS` — auto-send I'M IN / I'M OUT lifecycle alerts when trades update.
+- `ALERTS_ENABLED` — master switch for emitting alerts.
+- `TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram delivery controls.
+- `DATABASE_URL` — backing database for trades and events.
+- `MIN_SIGNAL_SCORE` — minimum score for a setup to alert.
+- `MAX_TICKERS_PER_RUN`, `MAX_RUNTIME_SECONDS` — scan limits.
+- `MAX_ALERTS_PER_RUN`, `ALERT_COOLDOWN_MINUTES`, `MAX_ALERTS_PER_TICKER_PER_DAY`, `COOLDOWN_MINUTES` — alert throttles.
+- `OPT_*` filters — option selection guards (moneyness, spreads, volume/OI, delta bands, DTE window, premium caps).
+- `MAX_PREMIUM_*`, `OPT_MIN_DTE`, `OPT_MAX_DTE` — pricing and timing limits for contracts.
 
 ## Endpoints
 - `GET /health` — Liveness and DB connectivity check.
