@@ -4,6 +4,7 @@ from typing import Iterable, List
 
 from app.config import get_settings
 from app.services.setups.base import SignalCandidate
+from app.utils.dates import normalize_any_date_to_mmddyyyy, parse_mmddyyyy
 
 
 def _alert_style() -> str:
@@ -45,26 +46,22 @@ def _format_date(expiration: str | None, expiration_iso: str | None = None) -> s
     candidate = expiration_iso or expiration
     if not candidate:
         return "-"
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(candidate, fmt).strftime("%d-%m-%Y")
-        except ValueError:
-            continue
-    return str(expiration or candidate)
+    try:
+        return normalize_any_date_to_mmddyyyy(candidate)
+    except ValueError:
+        return str(candidate)
 
 
 def _dte(expiration_iso: str | None, expiration: str | None = None) -> str:
     candidate = expiration_iso or expiration
     if not candidate:
         return "-"
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
-        try:
-            exp_date = datetime.strptime(candidate, fmt).date()
-            days = (exp_date - datetime.utcnow().date()).days
-            return str(days)
-        except ValueError:
-            continue
-    return "-"
+    try:
+        exp_date = parse_mmddyyyy(candidate)
+        days = (exp_date - datetime.utcnow().date()).days
+        return str(days)
+    except ValueError:
+        return "-"
 
 
 def _reasons(reasons: Iterable[str], limit: int = 3) -> List[str]:
@@ -81,11 +78,13 @@ def format_trade_idea_with_options(signal: SignalCandidate, contract: dict) -> s
     strike = _fmt_price(contract.get("strike"))
     opt_code = "C" if direction == "CALLS" else "P"
 
-    bid = _fmt_price(contract.get("bid"))
-    ask = _fmt_price(contract.get("ask"))
+    bid_val = contract.get("bid")
+    ask_val = contract.get("ask")
+    bid = _fmt_price(bid_val)
+    ask = _fmt_price(ask_val)
     mid_raw = contract.get("mid")
-    if mid_raw is None and contract.get("bid") is not None and contract.get("ask") is not None:
-        mid_raw = (contract.get("bid") + contract.get("ask")) / 2
+    if mid_raw is None and bid_val is not None and ask_val is not None:
+        mid_raw = (bid_val + ask_val) / 2
     mid = _fmt_price(mid_raw)
 
     spread_val = contract.get("spread_pct")
@@ -187,7 +186,7 @@ def format_im_in(trade) -> str:
         f"Stop: {stop}",
         f"Targets: {t1} → {t2}",
         "",
-        "Staying with the plan.",
+        "Plan is live. Manage risk and let price work.",
     ]
 
     return "\n".join(lines)

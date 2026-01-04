@@ -44,7 +44,7 @@ Trade Idea (Options)
 🚨 TRADE IDEA — NVDA CALLS
 
 Underlying: NVDA @ 118.50
-Contract: 21-06-2024 100.00C (DTE: 5)
+Contract: 06-21-2024 100.00C (DTE: 5)
 Premium: 2.45 mid (2.35 x 2.55) | Spread: 8.2%
 Vol/OI: 12500 / 68420
 Delta: 0.55 | IV: 45.0%
@@ -121,7 +121,7 @@ Trading / behavior:
 - `UNIVERSE_SIZE`: Number of tickers to scan (default 20; recommended 500 for breadth).
 - `ENABLE_RTH_ONLY`: Restrict scans and updates to regular trading hours when true.
 - `ALERT_STYLE`: Alert verbosity (`short`, `medium`, `deep`).
-- Option selection guardrails (configurable): `OPT_MAX_MONEYNESS_PCT`, `OPT_MAX_SPREAD_PCT`, `OPT_MIN_DTE`, `OPT_MAX_DTE`, `OPT_MIN_VOLUME`, `OPT_MIN_OI`, `OPT_CALL_DELTA_MIN`, `OPT_CALL_DELTA_MAX`, `OPT_PUT_DELTA_MIN`, `OPT_PUT_DELTA_MAX`.
+- Option selection guardrails (configurable): `OPT_MAX_MONEYNESS_PCT` (0.12), `OPT_MAX_SPREAD_PCT` (0.20), `OPT_MIN_DTE` (5), `OPT_MAX_DTE` (21), `OPT_MIN_VOLUME` (50), `OPT_MIN_OI` (200), `OPT_CALL_DELTA_MIN` (0.20), `OPT_CALL_DELTA_MAX` (0.55), `OPT_PUT_DELTA_MIN` (-0.55), `OPT_PUT_DELTA_MAX` (-0.20).
 
 ## Endpoints
 - `GET /health` — Liveness and DB connectivity check.

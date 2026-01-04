@@ -4,6 +4,7 @@ from typing import Dict, Optional
 
 from app.config import get_settings
 from app.services.setups.base import SignalCandidate
+from app.utils.dates import normalize_any_date_to_mmddyyyy, parse_mmddyyyy
 
 
 class OptionDecision:
@@ -12,18 +13,15 @@ class OptionDecision:
         self.value_score = value_score
         self.reason = reason
 
-
 def _parse_expiration(contract: Dict) -> Optional[date]:
     raw = contract.get("expiration_iso") or contract.get("expiration")
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(str(raw)).date()
+        normalized = normalize_any_date_to_mmddyyyy(str(raw))
+        return parse_mmddyyyy(normalized)
     except ValueError:
-        try:
-            return datetime.strptime(str(raw), "%d-%m-%Y").date()
-        except ValueError:
-            return None
+        return None
 
 
 def _spread_ratio(bid: Optional[float], ask: Optional[float], mid: Optional[float]) -> Optional[float]:
@@ -40,6 +38,9 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
     desired_type = "call" if signal.direction == "bull" else "put"
     now = datetime.utcnow().date()
 
+    if underlying_price is None:
+        return OptionDecision(None, 0, reason="Missing underlying price")
+
     if not settings.options_enabled or settings.options_only_if_score_at_least > 100:
         return OptionDecision(None, 0, reason="Options disabled")
 
@@ -54,7 +55,7 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
             continue
 
         strike = leg.get("strike")
-        if strike is None or underlying_price is None:
+        if strike is None:
             continue
 
         moneyness_pct = abs(float(strike) - float(underlying_price)) / float(underlying_price)
@@ -106,6 +107,7 @@ def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_pric
                 "liquidity_score": liquidity_score,
                 "spread": spread,
                 "moneyness_pct": moneyness_pct,
+                "delta": delta,
             }
         )
 

@@ -1,8 +1,4 @@
-from pathlib import Path
-from types import SimpleNamespace
-
-import pytest
-
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,7 +48,7 @@ def test_templates_plain_text(sample_signal, sample_trade):
     outputs = [
         format_trade_idea_with_options(
             sample_signal,
-            {"symbol": "TEST123", "expiration": "20-12-2024", "underlying_price": 100.0},
+            {"symbol": "TEST123", "expiration": "12-20-2024", "underlying_price": 100.0},
         ),
         format_trade_idea_stock_only(sample_signal, "Options unavailable"),
         format_im_in(sample_trade),
@@ -74,7 +70,7 @@ def test_readme_has_no_placeholders():
 def test_option_template_includes_pricing_lines(sample_signal):
     contract = {
         "symbol": "TEST123",
-        "expiration": "20-12-2024",
+        "expiration": "12-20-2024",
         "expiration_iso": "2024-12-20",
         "strike": 100,
         "option_type": "call",
@@ -96,11 +92,11 @@ def test_option_template_includes_pricing_lines(sample_signal):
     assert "Spread:" in message
     assert "Vol/OI:" in message
     assert "Delta:" in message and "IV:" in message
-    assert "21-12-2024" not in message  # ensure DD-MM-YYYY formatting is used
+    assert "12-20-2024" in message
 
 
 def test_alerts_do_not_show_iso_dates(sample_signal, sample_trade):
-    contract = {"symbol": "TEST123", "expiration": "2024-12-20", "strike": 100, "option_type": "call"}
+    contract = {"symbol": "TEST123", "expiration": "01-09-2026", "strike": 100, "option_type": "call"}
     outputs = [
         format_trade_idea_with_options(sample_signal, contract),
         format_trade_idea_stock_only(sample_signal, "Options unavailable"),
@@ -110,3 +106,14 @@ def test_alerts_do_not_show_iso_dates(sample_signal, sample_trade):
 
     for text in outputs:
         assert "2024-" not in text
+        assert re.search(r"\b\d{4}-\d{2}-\d{2}\b", text) is None
+
+
+def test_alert_dates_normalized_to_mmddyyyy(sample_signal):
+    contract = {"symbol": "TEST123", "expiration": "2026-01-09", "strike": 100, "option_type": "call"}
+    message = format_trade_idea_with_options(sample_signal, contract)
+
+    assert "01-09-2026" in message
+    assert "2026-01-09" not in message
+    assert "09-01-2026" not in message
+    assert re.search(r"\b\d{4}-\d{2}-\d{2}\b", message) is None
