@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -30,13 +30,18 @@ def test_normalize_rejects_invalid():
 
 
 def test_format_et_timestamp_respects_timezone():
-    dt = datetime(2026, 1, 4, 5, 52, tzinfo=ZoneInfo("UTC"))
-    assert format_et_timestamp(dt) == "01-04-2026 12:52 AM ET"
+    dt = datetime(2026, 1, 4, 1, 10, tzinfo=timezone.utc)
+    assert format_et_timestamp(dt) == "01-03-2026 08:10 PM ET"
 
 
 def test_format_et_timestamp_handles_naive_datetime():
     dt = datetime(2026, 1, 4, 5, 52)
-    assert format_et_timestamp(dt) == "01-04-2026 05:52 AM ET"
+    assert format_et_timestamp(dt) == "01-04-2026 12:52 AM ET"
+
+
+def test_format_et_timestamp_strips_seconds_and_microseconds():
+    dt = datetime(2026, 1, 4, 5, 52, 30, 123456, tzinfo=timezone.utc)
+    assert format_et_timestamp(dt) == "01-04-2026 12:52 AM ET"
 
 
 def test_format_mmddyyyy_works_for_date_and_datetime():
