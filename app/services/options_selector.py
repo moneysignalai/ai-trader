@@ -1,10 +1,10 @@
 from __future__ import annotations
-from datetime import date, datetime
+from datetime import date
 from typing import Dict, Optional
 
 from app.config import get_settings
 from app.services.setups.base import SignalCandidate
-from app.utils.dates import normalize_any_date_to_mmddyyyy, parse_mmddyyyy
+from app.utils.dates import et_today_date, normalize_any_date_to_mmddyyyy, parse_mmddyyyy
 
 
 class OptionDecision:
@@ -36,13 +36,22 @@ def _spread_ratio(bid: Optional[float], ask: Optional[float], mid: Optional[floa
 def select_option(signal: SignalCandidate, chain_snapshot: Dict, underlying_price: float) -> OptionDecision:
     settings = get_settings()
     desired_type = "call" if signal.direction == "bull" else "put"
-    now = datetime.utcnow().date()
+    now = et_today_date()
 
     if underlying_price is None:
         return OptionDecision(None, 0, reason="Missing underlying price")
 
-    if not settings.options_enabled or settings.options_only_if_score_at_least > 100:
+    if not settings.options_enabled:
         return OptionDecision(None, 0, reason="Options disabled")
+
+    score_raw = signal.features.get("score") if isinstance(signal.features, dict) else None
+    try:
+        score_value = float(score_raw) if score_raw is not None else 0.0
+    except (TypeError, ValueError):
+        score_value = 0.0
+
+    if score_value < settings.options_only_if_score_at_least:
+        return OptionDecision(None, 0, reason="Score below options threshold")
 
     legs = chain_snapshot.get("results", []) if isinstance(chain_snapshot, dict) else []
     candidates = []
