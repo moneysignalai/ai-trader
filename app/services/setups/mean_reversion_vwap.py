@@ -9,9 +9,16 @@ class MeanReversionToVwapDetector(SetupDetector):
         if not ohlcv:
             return None
         last = ohlcv[-1]
-        if last.get("far_from_vwap"):
-            entry = last["close"]
-            stop = last["close"] - 0.4
+        vwap = last.get("vwap")
+        close = last.get("close")
+        atr = last.get("atr14") or 0.5
+        if vwap is None or close is None:
+            return None
+        distance = vwap - close
+        far_from_vwap = distance > max(0.3, 0.5 * atr)
+        if far_from_vwap:
+            entry = close
+            stop = close - max(0.4, 0.6 * atr)
             targets = [entry + 0.3, entry + 0.6]
             return SignalCandidate(
                 ticker=last.get("ticker", "TST"),
@@ -22,7 +29,7 @@ class MeanReversionToVwapDetector(SetupDetector):
                 stop=stop,
                 targets=targets,
                 reasons=["Extended from VWAP", "Expecting mean reversion"],
-                features={"extension": 2.0},
+                features={"extension": distance, "risk": atr},
                 regime="RANGE",
             )
         return None

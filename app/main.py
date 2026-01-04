@@ -14,6 +14,7 @@ from app import models
 from app.services import universe as universe_service
 from app.services.bars import normalize_bar
 from app.services.massive_client import MassiveClient
+from app.services.feature_enricher import enrich_bars
 from app.services.setups.trend_pullback import TrendPullbackDetector
 from app.services.setups.breakout_volume import BreakoutVolumeDetector
 from app.services.setups.vwap_reclaim import VwapReclaimDetector
@@ -76,9 +77,7 @@ def _detectors():
     ]
 
 
-def _find_signal_for_ticker(
-    ticker: str, client: MassiveClient, min_score: float, return_best: bool = False
-):
+def _load_bars_for_ticker(ticker: str, client: MassiveClient) -> list[dict]:
     raw_ohlcv = client.get_aggregates(ticker)
     ohlcv = []
 
@@ -94,6 +93,14 @@ def _find_signal_for_ticker(
             )
         normalized["ticker"] = ticker
         ohlcv.append(normalized)
+
+    return enrich_bars(ohlcv)
+
+
+def _find_signal_for_ticker(
+    ticker: str, client: MassiveClient, min_score: float, return_best: bool = False
+):
+    ohlcv = _load_bars_for_ticker(ticker, client)
 
     best_candidate = None
     best_score = float("-inf")
@@ -128,6 +135,26 @@ def _instrument_type_from_trade(trade) -> str:
     if getattr(trade, "option_symbol", None):
         return "CALL" if getattr(trade, "direction", "bull") == "bull" else "PUT"
     return "STOCK"
+
+
+def _summarize_candidate(sig, scored, threshold: float, governor_reason: str | None = None):
+    would_alert = scored.total >= threshold and not governor_reason
+    top_features = []
+    if getattr(scored, "components", None):
+        sorted_feats = sorted(scored.components.items(), key=lambda item: item[1], reverse=True)
+        top_features = [name for name, _ in sorted_feats[:5]]
+    failed_gates = []
+    if scored.total < threshold:
+        failed_gates.append(f"Score below threshold ({scored.total:.1f} < {threshold})")
+    if governor_reason:
+        failed_gates.append(governor_reason)
+    return {
+        "setup_name": sig.setup_name,
+        "direction": sig.direction,
+        "score": scored.total,
+        "threshold_used": threshold,
+        "would_alert": would_alert,
+    }, top_features, failed_gates
 
 
 class TradeInRequest(BaseModel):
@@ -383,15 +410,26 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
     client = MassiveClient()
     signals = []
     tickers = universe_service.latest_universe(session)
+    apply_limits = timeframe == "day"
     start_time = time.monotonic()
     processed = 0
+    alerts_sent = 0
     for ticker in tickers:
-        if processed >= settings.max_tickers_per_run:
+        if apply_limits and processed >= settings.max_tickers_per_run:
             logger.info("Stopping scan after hitting MAX_TICKERS_PER_RUN=%s", settings.max_tickers_per_run)
             break
-        if time.monotonic() - start_time > settings.max_runtime_seconds:
+        if apply_limits and (time.monotonic() - start_time) > settings.max_runtime_seconds:
             logger.info("Stopping scan after hitting runtime limit %ss", settings.max_runtime_seconds)
             break
+        if apply_limits and alerts_sent >= settings.max_alerts_per_run:
+            logger.info("Stopping scan after reaching MAX_ALERTS_PER_RUN=%s", settings.max_alerts_per_run)
+            break
+        if apply_limits:
+            allowed, reason = allow_trade(session, ticker, mutate=False)
+            if not allowed and reason:
+                logger.info("Skipping %s due to governor: %s", ticker, reason)
+                processed += 1
+                continue
         candidate = _find_signal_for_ticker(ticker, client, settings.min_signal_score)
         if candidate:
             sig, scored = candidate
@@ -402,7 +440,7 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
     # pick best signal
     signal, score = sorted(signals, key=lambda x: x[1], reverse=True)[0]
     logger.info("Top signal %s score=%s setup=%s", signal.ticker, score, signal.setup_name)
-    if settings.max_alerts_per_run <= 0:
+    if apply_limits and settings.max_alerts_per_run <= 0:
         logger.info("MAX_ALERTS_PER_RUN=%s prevents emitting alerts", settings.max_alerts_per_run)
         return {"message": "alerts capped for this run"}
     allowed, reason = allow_trade(session, signal.ticker)
@@ -451,7 +489,8 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
         signal,
         option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
     )
-    return {"signal": signal.ticker, "score": score, "alerts_sent": 1}
+    alerts_sent += 1
+    return {"signal": signal.ticker, "score": score, "alerts_sent": alerts_sent}
 
 
 @app.post("/scan/{tf}")
@@ -477,6 +516,71 @@ def scan(tf: str, request: Request, session=Depends(get_session)):
             status_code=500,
             content={"status": "error", "detail": str(exc)},
         )
+
+
+@app.get("/debug/explain")
+def debug_explain(ticker: str, request: Request, session=Depends(get_session)):
+    if not settings.debug_endpoints_enabled:
+        raise HTTPException(403, "debug endpoints disabled")
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s ticker=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+        ticker,
+    )
+    client = MassiveClient()
+    try:
+        bars = _load_bars_for_ticker(ticker, client)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to load bars for /debug/explain")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(exc)})
+
+    best_candidate = None
+    best_score = float("-inf")
+    qualified = None
+    for detector in _detectors():
+        sig = detector.detect(bars)
+        if not sig:
+            continue
+        scored = score_signal(sig)
+        sig.features["score"] = scored.total
+        if scored.total >= settings.min_signal_score and qualified is None:
+            qualified = (sig, scored)
+        if scored.total > best_score:
+            best_candidate = (sig, scored)
+            best_score = scored.total
+
+    selected = qualified or best_candidate
+    governor_reason = None
+    if selected:
+        allowed, reason = allow_trade(session, ticker, mutate=False)
+        if not allowed:
+            governor_reason = reason
+        summary, top_features, failed_gates = _summarize_candidate(
+            selected[0], selected[1], settings.min_signal_score, governor_reason
+        )
+    else:
+        summary = None
+        top_features = []
+        failed_gates = ["No detectors triggered"]
+
+    if not selected:
+        failed_gates.append("Score below threshold" if best_score > float("-inf") else "No score computed")
+    elif selected[1].total < settings.min_signal_score:
+        failed_gates.append(f"Below MIN_SIGNAL_SCORE {settings.min_signal_score}")
+
+    response = {
+        "ticker": ticker,
+        "bar_count": len(bars),
+        "last_price": bars[-1].get("close") if bars else None,
+        "best_candidate": summary,
+        "top_features_used": top_features,
+        "failed_gates": failed_gates,
+        "timestamp_et": format_et_timestamp(),
+    }
+    logger.info("JOB END /debug/explain result=%s", response)
+    return response
 
 
 @app.post("/state/update")

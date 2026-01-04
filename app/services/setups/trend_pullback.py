@@ -11,7 +11,14 @@ class TrendPullbackDetector(SetupDetector):
         last = ohlcv[-1]
         prev = ohlcv[-2]
         # simple heuristic: rising highs and lows
-        if prev["low"] < last["low"] and prev["high"] < last["high"]:
+        if (
+            prev.get("low") is not None
+            and last.get("low") is not None
+            and prev.get("high") is not None
+            and last.get("high") is not None
+            and prev.get("low") < last.get("low")
+            and prev.get("high") < last.get("high")
+        ):
             entry = last["high"] + 0.1
             stop = last["low"] - 0.1
             targets = [entry + 0.5, entry + 1.0]
@@ -24,7 +31,7 @@ class TrendPullbackDetector(SetupDetector):
                 stop=stop,
                 targets=targets,
                 reasons=["Pullback held", "Trend intact"],
-                features={"slope": 1.0},
+                features={"slope": 1.0, "momentum": (last.get("ema9") or last.get("close", 0)) - (prev.get("ema9") or prev.get("close", 0))},
                 regime="TREND",
             )
         return None

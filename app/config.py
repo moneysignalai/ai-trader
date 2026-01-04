@@ -9,6 +9,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _parse_float(value: str | None, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class Settings:
     env: str = os.getenv("ENV", "dev")
     timezone: str = os.getenv("TIMEZONE", "America/New_York")
@@ -29,16 +36,14 @@ class Settings:
     rth_start: str = os.getenv("RTH_START", "09:30")
     rth_end: str = os.getenv("RTH_END", "16:00")
 
-    max_tickers_per_run: int = int(os.getenv("MAX_TICKERS_PER_RUN", "500"))
-    max_runtime_seconds: int = int(os.getenv("MAX_RUNTIME_SECONDS", "120"))
+    max_tickers_per_run: int = int(os.getenv("MAX_TICKERS_PER_RUN", "250"))
+    max_runtime_seconds: int = int(os.getenv("MAX_RUNTIME_SECONDS", "40"))
     max_alerts_per_run: int = int(os.getenv("MAX_ALERTS_PER_RUN", "3"))
     alert_cooldown_minutes: int = int(
-        os.getenv("ALERT_COOLDOWN_MINUTES", os.getenv("TICKER_COOLDOWN_MINUTES", "5"))
+        os.getenv("ALERT_COOLDOWN_MINUTES", os.getenv("TICKER_COOLDOWN_MINUTES", "15"))
     )
 
-    min_signal_score: float = float(
-        os.getenv("MIN_SIGNAL_SCORE", os.getenv("MIN_SCORE_DAY", "78"))
-    )
+    min_signal_score: float = None  # type: ignore[assignment]
     cooldown_minutes: int = int(os.getenv("COOLDOWN_MINUTES", "30"))
     max_alerts_per_ticker_per_day: int = int(os.getenv("MAX_ALERTS_PER_TICKER_PER_DAY", "3"))
 
@@ -86,11 +91,17 @@ class Settings:
     alerts_enabled: bool = os.getenv("ALERTS_ENABLED", "true").lower() == "true"
     alert_style: str = os.getenv("ALERT_STYLE", "medium")
     enable_follow_up_alerts: bool = os.getenv("ENABLE_FOLLOW_UP_ALERTS", "false").lower() == "true"
+    debug_endpoints_enabled: bool = os.getenv("DEBUG_ENDPOINTS_ENABLED", "false").lower() == "true"
 
 
 @lru_cache()
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    settings.min_signal_score = _parse_float(
+        os.getenv("MIN_SIGNAL_SCORE"),
+        _parse_float(os.getenv("MIN_SCORE_DAY"), 78.0),
+    )
+    return settings
 
 
 def _parse_time(value: str) -> time:
