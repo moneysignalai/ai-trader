@@ -861,3 +861,104 @@ def debug_force_alert(
     )
     logger.info("JOB END /debug/force-alert result=%s", response_payload)
     return response_payload
+
+
+@app.post("/debug/preview-alert")
+def debug_preview_alert(ticker: str, request: Request):
+    if os.getenv("DEBUG_ENDPOINTS_ENABLED", "false").lower() != "true":
+        raise HTTPException(403, "forbidden")
+
+    ticker = ticker.upper()
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
+    logger.info("JOB START /debug/preview-alert ticker=%s", ticker)
+
+    client = MassiveClient()
+    try:
+        candidate = _find_signal_for_ticker(
+            ticker, client, settings.min_signal_score, return_best=True
+        )
+    except ValueError as exc:
+        logger.exception("JOB ERROR /debug/preview-alert")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "detail": str(exc)},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("JOB ERROR /debug/preview-alert")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "detail": str(exc)},
+        )
+
+    snapshot = client.get_snapshot(ticker) or {}
+    option_snapshot = client.get_options_chain_snapshot(ticker)
+    underlying_price = snapshot.get("last")
+
+    header_lines = [
+        "🧪 PREVIEW ALERT (NOT A LIVE TRADE)",
+        f"Ticker: {ticker}",
+        f"Snapshot price: {underlying_price if underlying_price is not None else '-'}",
+    ]
+
+    message_body = "No setups qualified on the latest data."
+    preview_context = {
+        "endpoint": "/debug/preview-alert",
+        "ticker": ticker,
+        "request_id": request.headers.get("x-request-id"),
+        "preview": True,
+    }
+
+    if candidate:
+        signal, scored = candidate
+        qualified_normally = scored.total >= settings.min_signal_score
+        header_lines.extend(
+            [
+                f"Signal score: {scored.total:.1f}",
+                f"Threshold: {settings.min_signal_score}",
+                f"Qualified normally: {'yes' if qualified_normally else 'no'}",
+            ]
+        )
+
+        option_decision = select_option(
+            signal, option_snapshot, underlying_price=underlying_price or signal.entry_trigger
+        )
+        logger.info(
+            "Option decision for %s chosen=%s reason=%s",
+            signal.ticker,
+            bool(option_decision.contract),
+            option_decision.reason,
+        )
+        if option_decision.contract:
+            message_body = format_trade_idea_with_options(signal, option_decision.contract)
+        else:
+            stock_reasons = option_decision.fallback_reasons or [
+                "Options premiums elevated or expensive",
+                "Spread/liquidity not ideal",
+                "Cleaner risk with shares",
+            ]
+            message_body = format_trade_idea_stock_only(signal, stock_reasons)
+    else:
+        logger.info("No setups qualified for %s", ticker)
+
+    header_lines.append(f"Timestamp: {format_et_timestamp()}")
+    preview_message = "\n".join(header_lines + ["", message_body])
+    send_result = send_or_log(preview_message, context=preview_context)
+
+    if not send_result.get("ok"):
+        response = {
+            "status": "error",
+            "ticker": ticker,
+            "telegram_status_code": send_result.get("status_code"),
+            "detail": send_result.get("response"),
+        }
+        logger.error("JOB ERROR /debug/preview-alert result=%s", response)
+        return JSONResponse(status_code=500, content=response)
+
+    response = {"status": "sent_preview", "ticker": ticker}
+    logger.info("JOB END /debug/preview-alert result=%s", response)
+    return response

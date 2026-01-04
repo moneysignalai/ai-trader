@@ -137,6 +137,7 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `POST /universe/rebuild` — Rebuilds the ticker universe for future scans.
 - `POST /test/telegram` — Sends a test message to verify Telegram delivery.
 - `POST /debug/force-alert` — Debug-only hook to run the `/scan/day` pipeline for a single ticker.
+- `POST /debug/preview-alert` — Debug-only endpoint to send a preview of the real alert formatter for a ticker.
 - `GET /debug/explain` — Returns a dry-run explanation of a single ticker without sending Telegram.
 
 ### Using `/debug/force-alert`
@@ -157,6 +158,16 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - Preview example (sends a clearly labeled test alert even if it doesn't qualify):
   ```bash
   curl -X POST "https://<service>.onrender.com/debug/force-alert?ticker=SPY&min_score_override=3&send_preview=true"
+  ```
+
+### Using `/debug/preview-alert`
+- Enable via `DEBUG_ENDPOINTS_ENABLED=true` (403 otherwise).
+- Query params:
+  - `ticker` (required) — symbol to preview.
+- Behavior: fetches Massive snapshot + options snapshot, builds the same formatter as live alerts (ALERT_STYLE respected), and sends a preview Telegram message even if no setup qualifies. Message is clearly labeled as a preview.
+- Example:
+  ```bash
+  curl -X POST "https://<service>.onrender.com/debug/preview-alert?ticker=SPY"
   ```
 
 ### Using `/debug/explain`
