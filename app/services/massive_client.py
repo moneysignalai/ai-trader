@@ -2,6 +2,7 @@ import logging
 import time
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 
@@ -102,6 +103,40 @@ class MassiveClient:
             "Aggregates window ticker=%s from=%s to=%s candles=%s", ticker, frm, to, len(results)
         )
         return results
+
+    def get_grouped_aggregates(self, on_date: str) -> List[Dict[str, Any]]:
+        path = f"/v2/aggs/grouped/locale/us/market/stocks/{on_date}"
+        data = self._request("GET", path)
+        return data.get("results", []) if isinstance(data, dict) else []
+
+    def get_reference_tickers(self, market: str = "stocks", locale: str = "us") -> List[str]:
+        tickers: List[str] = []
+        path: Optional[str] = "/v3/reference/tickers"
+        params: Optional[Dict[str, Any]] = {
+            "market": market,
+            "active": "true",
+            "limit": 1000,
+            "locale": locale,
+        }
+
+        while path:
+            data = self._request("GET", path, params=params)
+            results = data.get("results", []) if isinstance(data, dict) else []
+            for row in results:
+                ticker = row.get("ticker")
+                if ticker:
+                    tickers.append(ticker)
+
+            next_url = data.get("next_url") if isinstance(data, dict) else None
+            if next_url:
+                parsed = urlsplit(next_url)
+                path = parsed.path
+                params = {key: value for key, value in parse_qsl(parsed.query)}
+            else:
+                path = None
+                params = None
+
+        return tickers
 
     def get_snapshot(self, ticker: str) -> Dict[str, Any]:
         data = self._request("GET", f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}")
