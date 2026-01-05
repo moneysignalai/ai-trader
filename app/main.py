@@ -62,15 +62,18 @@ app = FastAPI(title="AI Trader Alert Engine")
 def apply_startup_migrations():
     if not settings.db_auto_migrate:
         logger.info("DB_AUTO_MIGRATE=false; skipping trades schema migration")
+        _schema_health_check()
         return
     if not settings.database_url:
         logger.info("No DATABASE_URL configured; skipping trades schema migration")
+        _schema_health_check()
         return
     try:
         result = ensure_trades_schema(engine)
         logger.info("Trades schema migration summary: %s", result)
     except Exception:  # noqa: BLE001
         logger.exception("Trades schema migration failed but server will continue")
+    _schema_health_check()
 
 
 @app.middleware("http")
@@ -92,6 +95,35 @@ def _within_rth() -> bool:
 
 def _ideas_mode_active() -> bool:
     return (getattr(settings, "alert_mode", "ideas") or "ideas").lower() == "ideas"
+
+
+def _schema_health_check():
+    """Validate critical Trade fields exist and log their defaults without touching the DB."""
+    try:
+        dummy = models.Trade(
+            ticker="SCHEMA-CHECK",
+            setup="healthcheck",
+            setup_name="healthcheck",
+            side="bullish",
+            direction="bullish",
+            state="PENDING",
+            status="PENDING",
+            timeframe="day",
+            opened_at=datetime.utcnow(),
+            entry_trigger_price=0.0,
+            stop=0.0,
+            stop_price=0.0,
+        )
+        logger.info(
+            "Trades startup schema sanity: direction=%s state=%s stop=%s stop_price=%s timeframe=%s",
+            dummy.direction,
+            dummy.state,
+            dummy.stop,
+            dummy.stop_price,
+            dummy.timeframe,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Trades startup schema sanity check failed")
 
 
 def _detectors():

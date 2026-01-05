@@ -46,6 +46,20 @@ def create_trade(
     trade_status = "OPEN" if (entry_mode or "confirm") == "immediate" else "PENDING"
     resolved_entry_price = entry_price if trade_status == "OPEN" else None
 
+    entry_trigger_price = _coerce_float(getattr(signal, "entry_trigger", None))
+    stop_value = _coerce_float(getattr(signal, "stop", None))
+    if stop_value is None:
+        stop_value = _coerce_float(getattr(signal, "stop_price", None))
+    if stop_value is None:
+        base_price = entry_trigger_price
+        if base_price is None:
+            base_price = _coerce_float(entry_price) or _coerce_float(getattr(signal, "entry", None)) or 0.0
+        if side == "bullish":
+            stop_value = base_price * 0.99
+        else:
+            stop_value = base_price * 1.01
+    stop_value = round(stop_value, 4)
+
     resolved_timeframe = (timeframe or getattr(signal, "timeframe", None) or "day").strip() or "day"
 
     logger.info(
@@ -68,8 +82,9 @@ def create_trade(
         opened_at=datetime.utcnow(),
         timeframe=resolved_timeframe,
         entry_price=resolved_entry_price,
-        entry_trigger_price=getattr(signal, "entry_trigger", None),
-        stop_price=getattr(signal, "stop", None),
+        entry_trigger_price=entry_trigger_price,
+        stop=stop_value,
+        stop_price=stop_value,
         target_prices=targets if isinstance(targets, list) else [],
         last_price=entry_price,
         max_favorable=0.0 if resolved_entry_price is not None else None,
@@ -78,6 +93,18 @@ def create_trade(
         t1=targets[0] if len(targets) > 0 else None,
         t2=targets[1] if len(targets) > 1 else None,
         trade_uuid=str(uuid4()),
+    )
+    logger.info(
+        "Creating trade %s tf=%s setup=%s side=%s dir=%s state=%s stop=%s stop_price=%s entry_trigger=%s",
+        signal.ticker,
+        resolved_timeframe,
+        setup_name,
+        side,
+        trade.direction,
+        trade.state,
+        trade.stop,
+        trade.stop_price,
+        trade.entry_trigger_price,
     )
     session.add(trade)
     session.flush()
