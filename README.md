@@ -165,7 +165,7 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `DEBUG_ENDPOINTS_ENABLED` (false) — enable debug-only HTTP endpoints (including force-entry/force-exit).
 - `MASSIVE_BASE_URL`, `ALWAYS_INCLUDE_TICKERS`, `EXCLUDE_TICKERS`, `ALERT_STYLE`, and other tuning levers remain available for fine-grained control.
 
-Schema compatibility: when Trade model fields change across versions, `DB_AUTO_MIGRATE` (default `true`) adds missing trades columns (setup, trade_uuid, status, timestamps, prices, alert metadata) and backfills legacy values so `/scan/day` and `/state/update` continue running without crashes. Existing installations that provisioned `trades.id` as an INTEGER/SERIAL remain compatible; the app now generates a separate `trade_uuid` TEXT identifier for tracking while allowing the database to autoincrement the numeric primary key.
+Schema compatibility: when Trade model fields change across versions, `DB_AUTO_MIGRATE` (default `true`) adds missing trades columns (setup, trade_uuid, timeframe, status, timestamps, prices, alert metadata) and backfills legacy values so `/scan/day` and `/state/update` continue running without crashes. The timeframe column is created when absent, backfilled to `day`, and given a database default to prevent null inserts. Existing installations that provisioned `trades.id` as an INTEGER/SERIAL remain compatible; the app now generates a separate `trade_uuid` TEXT identifier for tracking while allowing the database to autoincrement the numeric primary key.
 
 ## Endpoints
 - `GET /health` — Liveness and DB connectivity check.

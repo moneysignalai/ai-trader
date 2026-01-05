@@ -107,6 +107,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 "entry_trigger": "entry_trigger TEXT",
                 "t1": "t1 DOUBLE PRECISION",
                 "t2": "t2 DOUBLE PRECISION",
+                "timeframe": "timeframe TEXT",
             }
 
             for col_name, ddl in column_ddls.items():
@@ -161,6 +162,27 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                     )
                 )
                 backfilled["entry_trigger_price"] = result.rowcount or 0
+
+            if "timeframe" in column_ddls:
+                try:
+                    conn.execute(
+                        text("ALTER TABLE public.trades ALTER COLUMN timeframe SET DEFAULT 'day'")
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to set default for trades.timeframe: %s", exc)
+
+                try:
+                    result = conn.execute(
+                        text("UPDATE public.trades SET timeframe='day' WHERE timeframe IS NULL")
+                    )
+                    backfilled["timeframe"] = result.rowcount or 0
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to backfill trades.timeframe: %s", exc)
+
+                try:
+                    conn.execute(text("ALTER TABLE public.trades ALTER COLUMN timeframe SET NOT NULL"))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to enforce NOT NULL on trades.timeframe: %s", exc)
 
             summary["backfilled"] = backfilled
             logger.info(
