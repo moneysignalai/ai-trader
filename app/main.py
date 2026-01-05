@@ -416,11 +416,26 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
     client = MassiveClient()
     signals = []
     tickers = universe_service.latest_universe(session)
+    if timeframe == "day":
+        if not tickers:
+            logger.error("Universe empty — rebuilding")
+            tickers = universe_service.build_universe(session, client=client)
+        if universe_service.contains_placeholder_tickers(tickers):
+            logger.error("Universe contains placeholder tickers; rebuilding")
+            tickers = universe_service.build_universe(session, client=client)
+        if not tickers or universe_service.contains_placeholder_tickers(tickers):
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "detail": "Universe unavailable"},
+            )
     apply_limits = timeframe == "day"
     start_time = time.monotonic()
     processed = 0
     alerts_sent = 0
     for ticker in tickers:
+        if universe_service.is_placeholder_ticker(ticker):
+            logger.warning("Skipping placeholder ticker %s", ticker)
+            continue
         if apply_limits and processed >= settings.max_tickers_per_run:
             logger.info("Stopping scan after hitting MAX_TICKERS_PER_RUN=%s", settings.max_tickers_per_run)
             break
@@ -596,6 +611,18 @@ def debug_explain(ticker: str, request: Request, session=Depends(get_session)):
     return response
 
 
+@app.get("/debug/universe")
+def debug_universe(session=Depends(get_session)):
+    if not settings.debug_endpoints_enabled:
+        raise HTTPException(403, "debug endpoints disabled")
+    tickers = universe_service.latest_universe(session)
+    return {
+        "count": len(tickers),
+        "sample": tickers[:20],
+        "contains_fillers": universe_service.contains_placeholder_tickers(tickers),
+    }
+
+
 @app.post("/state/update")
 def state_update(request: Request, session=Depends(get_session)):
     logger.info(
@@ -605,18 +632,18 @@ def state_update(request: Request, session=Depends(get_session)):
         request.headers.get("user-agent"),
     )
     logger.info("JOB START /state/update")
-    if not _within_rth():
-        return {"message": "outside RTH"}
     client = MassiveClient()
 
     def price_lookup(ticker: str):
         snap = client.get_snapshot(ticker)
         return snap.get("last", 0) or 0
     try:
+        tickers = universe_service.build_universe(session, client=client)
         updated = update_trade_states(session, price_lookup)
         response = {
             "status": "ok",
-            "updated": len(updated),
+            "universe_count": len(tickers),
+            "updated_trades": len(updated),
             "messages": 0,
         }
         logger.info("JOB END /state/update result=%s", response)

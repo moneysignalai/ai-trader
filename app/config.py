@@ -26,11 +26,15 @@ class Settings:
     massive_base_url: str = os.getenv("MASSIVE_BASE_URL", "https://api.polygon.io")
 
     universe_size: int = int(os.getenv("UNIVERSE_SIZE", "20"))
-    always_include_tickers: list[str] = os.getenv(
-        "ALWAYS_INCLUDE_TICKERS",
-        "SPY,QQQ,IWM,DIA,XLK,XLF,XLV,XLE,XLI,XLY,XLP,XLU,XLB,XLC,XBI,SMH",
-    ).split(",")
-    exclude_tickers: list[str] = [t for t in os.getenv("EXCLUDE_TICKERS", "").split(",") if t]
+    always_include_tickers: list[str] = [
+        t.strip()
+        for t in os.getenv(
+            "ALWAYS_INCLUDE_TICKERS",
+            "SPY,QQQ,IWM,DIA,XLK,XLF,XLV,XLE,XLI,XLY,XLP,XLU,XLB,XLC,XBI,SMH",
+        ).split(",")
+        if t.strip()
+    ]
+    exclude_tickers: list[str] = [t.strip() for t in os.getenv("EXCLUDE_TICKERS", "").split(",") if t.strip()]
 
     enable_rth_only: bool = os.getenv("ENABLE_RTH_ONLY", "true").lower() == "true"
     rth_start: str = os.getenv("RTH_START", "09:30")

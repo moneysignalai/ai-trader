@@ -136,6 +136,8 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `ALERT_COOLDOWN_MINUTES` (15) — suppress alerts for tickers alerted within this cooldown window.
 - `MIN_SIGNAL_SCORE` (78.0 by default) — minimum score for a setup to alert; accepts whole numbers or floats.
 - `MAX_ALERTS_PER_TICKER_PER_DAY` (3) and `COOLDOWN_MINUTES` (30) — governor limits for repeated alerts.
+- `ALWAYS_INCLUDE_TICKERS` (SPY,QQQ,IWM,DIA,XLK,XLF,XLV,XLE,XLI,XLY,XLP,XLU,XLB,XLC,XBI,SMH) — tickers forced into the universe even if volume ranks lower.
+- `EXCLUDE_TICKERS` (empty) — comma-separated symbols to omit from the universe.
 - `OPT_MAX_MONEYNESS_PCT` (0.12), `OPT_MAX_SPREAD_PCT` (0.20), `OPT_MIN_DTE` (5), `OPT_MAX_DTE` (21), `OPT_MIN_VOLUME` (50), `OPT_MIN_OI` (200) — option selection guards.
 - `OPT_MAX_SPREAD_PCT`, `OPT_MAX_MONEYNESS_PCT` combine with `OPT_CALL_DELTA_*` and `OPT_PUT_DELTA_*` to fence contract quality.
 - `ALERT_STYLE` — short/medium/deep copy tone (kept for compatibility with idea formatting).
@@ -146,12 +148,24 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `GET /health` — Liveness and DB connectivity check.
 - `GET /preflight` — Returns key configuration flags and DB connectivity status.
 - `POST /scan/day` — Runs detectors, applies gating, and sends up to `IDEAS_PER_RUN` idea alerts within governor limits.
-- `POST /state/update` — Refreshes trade state/universe bookkeeping (no signal generation or alert delivery).
+- `POST /state/update` — Rebuilds the ticker universe from Massive reference data + top volumes, then refreshes trade states (no signal generation or alert delivery).
 - `POST /universe/rebuild` — Rebuilds the ticker universe for future scans.
 - `POST /test/telegram` — Sends a test message to verify Telegram delivery.
 - `POST /debug/force-alert` — Debug-only hook to run the `/scan/day` pipeline for a single ticker.
 - `POST /debug/preview-alert` — Debug-only endpoint to send a preview of the real alert formatter for a ticker.
 - `GET /debug/explain` — Returns a dry-run explanation of a single ticker without sending Telegram.
+- `GET /debug/universe` — Debug-only summary of the current universe with a filler-ticker check.
+
+### Universe lifecycle
+- `/state/update` (or `/universe/rebuild`) pulls Massive reference tickers, ranks by most recent grouped volume (stocks + ETFs, locale=US), enforces `ALWAYS_INCLUDE_TICKERS`, removes `EXCLUDE_TICKERS`, and stores the top `UNIVERSE_SIZE` symbols.
+- `/scan/day` will automatically rebuild the universe if it is empty or still contains placeholder `FILLxx` symbols and will never scan placeholder tickers.
+
+### Smoke test locally
+```bash
+curl -X POST http://localhost:8000/state/update
+curl http://localhost:8000/debug/universe
+curl -X POST http://localhost:8000/scan/day
+```
 
 ### Using `/debug/force-alert`
 - Enable via `DEBUG_ENDPOINTS_ENABLED=true` (403 otherwise).
