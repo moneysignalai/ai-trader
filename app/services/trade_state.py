@@ -26,6 +26,12 @@ def create_trade(
         setattr(existing, "_was_created", False)
         return existing
 
+    raw_setup = getattr(signal, "setup_name", None) or getattr(signal, "setup", None) or ""
+    setup_name = (raw_setup or "").strip()
+    if not setup_name:
+        setup_name = "unknown"
+        logger.warning("Signal missing setup_name; defaulting to 'unknown' for ticker=%s", signal.ticker)
+
     targets = getattr(signal, "targets", None) or []
     side = "bullish" if getattr(signal, "direction", "bull") == "bull" else "bearish"
     trade_status = "OPEN" if (entry_mode or "confirm") == "immediate" else "PENDING"
@@ -35,7 +41,8 @@ def create_trade(
 
     trade = Trade(
         ticker=signal.ticker,
-        setup=getattr(signal, "setup_name", None),
+        setup=setup_name,
+        setup_name=setup_name,
         side=side,
         status=trade_status,
         opened_at=datetime.utcnow(),

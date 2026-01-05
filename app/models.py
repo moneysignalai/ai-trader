@@ -67,6 +67,7 @@ class Trade(Base):
     timeframe: Mapped[str] = mapped_column(String(32), nullable=False, default="day", server_default="day")
     ticker: Mapped[str] = mapped_column(String, index=True)
     setup: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    setup_name: Mapped[str] = mapped_column(String(128), nullable=False, default="unknown", server_default="unknown")
     side: Mapped[str] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(16), index=True, default="PENDING")
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

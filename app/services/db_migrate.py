@@ -54,7 +54,7 @@ def _existing_columns(conn, table_name: str) -> list[dict[str, str]]:
 def _dialect_supported(conn) -> bool:
     dialect = getattr(conn.engine, "dialect", None)
     name = getattr(dialect, "name", "") if dialect else ""
-    return name in {"postgresql", "postgres"}
+    return name in {"postgresql", "postgres", "sqlite"}
 
 
 def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
@@ -87,8 +87,13 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
             existing_columns = _existing_columns(conn, "trades")
             existing_names = {col["name"] for col in existing_columns}
 
+            dialect = getattr(conn.engine, "dialect", None)
+            name = getattr(dialect, "name", "") if dialect else ""
+            table_ref = "public.trades" if name in {"postgresql", "postgres"} else "trades"
+
             column_ddls = {
                 "setup": "setup TEXT",
+                "setup_name": "setup_name TEXT",
                 "trade_uuid": "trade_uuid TEXT",
                 "status": "status TEXT",
                 "side": "side TEXT",
@@ -111,11 +116,17 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
             }
 
             for col_name, ddl in column_ddls.items():
-                conn.execute(text(f"ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS {ddl}"))
+                try:
+                    if name in {"postgresql", "postgres"}:
+                        conn.execute(text(f"ALTER TABLE {table_ref} ADD COLUMN IF NOT EXISTS {ddl}"))
+                    elif col_name not in existing_names:
+                        conn.execute(text(f"ALTER TABLE {table_ref} ADD COLUMN {ddl}"))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to add column %s: %s", col_name, exc)
                 if col_name not in existing_names:
                     summary["added_columns"].append(col_name)
 
-            if "trade_uuid" in column_ddls:
+            if "trade_uuid" in column_ddls and name in {"postgresql", "postgres"}:
                 conn.execute(
                     text(
                         "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_trade_uuid "
@@ -128,16 +139,40 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
             if "setup" in column_ddls and "setup_name" in existing_names:
                 result = conn.execute(
                     text(
-                        "UPDATE public.trades SET setup = setup_name "
+                        f"UPDATE {table_ref} SET setup = setup_name "
                         "WHERE setup IS NULL AND setup_name IS NOT NULL"
                     )
                 )
                 backfilled["setup"] = result.rowcount or 0
 
+            if "setup_name" in column_ddls:
+                if "setup" in existing_names:
+                    result = conn.execute(
+                        text(
+                            f"UPDATE {table_ref} SET setup_name = setup "
+                            "WHERE setup_name IS NULL AND setup IS NOT NULL"
+                        )
+                    )
+                    backfilled["setup_name_from_setup"] = result.rowcount or 0
+                result = conn.execute(
+                    text(
+                        f"UPDATE {table_ref} SET setup_name = 'unknown' "
+                        "WHERE setup_name IS NULL"
+                    )
+                )
+                backfilled["setup_name_unknown"] = result.rowcount or 0
+
+                try:
+                    conn.execute(
+                        text(f"ALTER TABLE {table_ref} ALTER COLUMN setup_name SET DEFAULT 'unknown'")
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to set default for trades.setup_name: %s", exc)
+
             if "status" in column_ddls and "state" in existing_names:
                 result = conn.execute(
                     text(
-                        "UPDATE public.trades SET status = state "
+                        f"UPDATE {table_ref} SET status = state "
                         "WHERE status IS NULL AND state IS NOT NULL"
                     )
                 )
@@ -146,7 +181,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
             if "stop_price" in column_ddls and "stop" in existing_names:
                 result = conn.execute(
                     text(
-                        "UPDATE public.trades SET stop_price = stop "
+                        f"UPDATE {table_ref} SET stop_price = stop "
                         "WHERE stop_price IS NULL AND stop IS NOT NULL"
                     )
                 )
@@ -155,7 +190,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
             if "entry_trigger" in existing_names and "entry_trigger_price" in column_ddls:
                 result = conn.execute(
                     text(
-                        "UPDATE public.trades "
+                        f"UPDATE {table_ref} "
                         "SET entry_trigger_price = CAST(entry_trigger AS DOUBLE PRECISION) "
                         "WHERE entry_trigger_price IS NULL "
                         "AND CAST(entry_trigger AS TEXT) ~ '^[0-9]+(\\.[0-9]+)?$'"
@@ -165,24 +200,23 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
 
             if "timeframe" in column_ddls:
                 try:
-                    conn.execute(
-                        text("ALTER TABLE public.trades ALTER COLUMN timeframe SET DEFAULT 'day'")
-                    )
+                    conn.execute(text(f"ALTER TABLE {table_ref} ALTER COLUMN timeframe SET DEFAULT 'day'"))
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Unable to set default for trades.timeframe: %s", exc)
 
                 try:
                     result = conn.execute(
-                        text("UPDATE public.trades SET timeframe='day' WHERE timeframe IS NULL")
+                        text(f"UPDATE {table_ref} SET timeframe='day' WHERE timeframe IS NULL")
                     )
                     backfilled["timeframe"] = result.rowcount or 0
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Unable to backfill trades.timeframe: %s", exc)
 
-                try:
-                    conn.execute(text("ALTER TABLE public.trades ALTER COLUMN timeframe SET NOT NULL"))
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Unable to enforce NOT NULL on trades.timeframe: %s", exc)
+                if name in {"postgresql", "postgres"}:
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table_ref} ALTER COLUMN timeframe SET NOT NULL"))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Unable to enforce NOT NULL on trades.timeframe: %s", exc)
 
             summary["backfilled"] = backfilled
             logger.info(
