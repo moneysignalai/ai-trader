@@ -91,6 +91,24 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
             name = getattr(dialect, "name", "") if dialect else ""
             table_ref = "public.trades" if name in {"postgresql", "postgres"} else "trades"
 
+            entry_trigger_column = next(
+                (col for col in existing_columns if col.get("name") == "entry_trigger"), None
+            )
+            if entry_trigger_column:
+                entry_trigger_type = (entry_trigger_column.get("type") or "").lower()
+                if entry_trigger_type in {"text", "character varying", "varchar"}:
+                    try:
+                        conn.execute(
+                            text(
+                                f"ALTER TABLE {table_ref} "
+                                "ALTER COLUMN entry_trigger TYPE DOUBLE PRECISION "
+                                "USING CASE WHEN entry_trigger ~ '^[0-9]+(\\.[0-9]+)?$' "
+                                "THEN entry_trigger::double precision ELSE NULL END"
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Unable to coerce trades.entry_trigger to double: %s", exc)
+
             column_ddls = {
                 "setup": "setup TEXT",
                 "setup_name": "setup_name TEXT",
@@ -109,7 +127,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 "alert_message_id": "alert_message_id TEXT",
                 "last_alert_hash": "last_alert_hash TEXT",
                 "option_symbol": "option_symbol TEXT",
-                "entry_trigger": "entry_trigger TEXT",
+                "entry_trigger": "entry_trigger DOUBLE PRECISION",
                 "t1": "t1 DOUBLE PRECISION",
                 "t2": "t2 DOUBLE PRECISION",
                 "timeframe": "timeframe TEXT",

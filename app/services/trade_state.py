@@ -9,6 +9,15 @@ from app.models import Trade
 logger = logging.getLogger(__name__)
 
 
+def _coerce_float(value):
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def create_trade(
     session,
     signal,
@@ -114,18 +123,35 @@ def update_trade_states(
         .filter(Trade.status.in_(["PENDING", "OPEN"]))
         .all()
     )
+    evaluated_count = len(trades)
+    opened_count = 0
+    closed_count = 0
+    skipped_missing_price = 0
+    skipped_missing_trigger = 0
     for trade in trades:
-        price = price_lookup(trade.ticker)
-        trade.last_price = price
+        price = _coerce_float(price_lookup(trade.ticker))
+        trade.last_price = price if price is not None else None
+
+        if price is None:
+            skipped_missing_price += 1
+            logger.warning("No price for ticker=%s; skipping trade_state update", trade.ticker)
+            continue
 
         if trade.status == "PENDING" and settings.entry_mode == "confirm":
-            trigger = trade.entry_trigger_price or trade.entry_trigger
-            if trigger is not None and _target_hit(trade, price, trigger):
+            trigger = _coerce_float(trade.entry_trigger_price) or _coerce_float(trade.entry_trigger)
+            if trigger is None:
+                skipped_missing_trigger += 1
+                logger.info(
+                    "Pending trade missing trigger; trade_id=%s ticker=%s", trade.id, trade.ticker
+                )
+                continue
+            if _target_hit(trade, price, trigger):
                 trade.entry_price = price
                 trade.max_favorable = 0.0
                 trade.status = "OPEN"
                 trade.opened_at = now
                 entries.append(trade)
+                opened_count += 1
                 logger.info(
                     "TRADE TRANSITION ticker=%s from=PENDING to=OPEN reason=entry_confirmed",
                     trade.ticker,
@@ -180,11 +206,21 @@ def update_trade_states(
             trade.exit_reason = exit_reason
             trade.closed_at = now
             exits.append(trade)
+            closed_count += 1
             logger.info(
                 "TRADE TRANSITION ticker=%s from=%s to=CLOSED reason=%s",
                 trade.ticker,
                 previous_status,
                 exit_reason,
             )
+
+    logger.info(
+        "Trade state update summary: evaluated=%s opened=%s closed=%s skipped_missing_price=%s skipped_missing_trigger=%s",
+        evaluated_count,
+        opened_count,
+        closed_count,
+        skipped_missing_price,
+        skipped_missing_trigger,
+    )
 
     return entries, exits
