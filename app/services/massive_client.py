@@ -139,17 +139,50 @@ class MassiveClient:
         return tickers
 
     def get_snapshot(self, ticker: str) -> Dict[str, Any]:
-        data = self._request("GET", f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}")
-        if not isinstance(data, dict):
+        """
+        Return a normalized stock snapshot dict with a stable `last` field.
+
+        This project originally targeted Polygon-style snapshot responses, but many
+        deployments point MASSIVE_BASE_URL to Massive (api.massive.com), which uses
+        a different snapshot surface (ex: `/v3/snapshot` unified snapshot).
+        """
+        # 1) Polygon-style snapshot (legacy compatibility)
+        try:
+            data = self._request(
+                "GET",
+                f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}",
+            )
+            if isinstance(data, dict):
+                last_trade = data.get("lastTrade", {}) or {}
+                last_quote = data.get("lastQuote", {}) or {}
+                price = last_trade.get("p") or last_quote.get("p") or last_quote.get("last")
+                if price is not None:
+                    return {"last_trade": last_trade, "last_quote": last_quote, "last": price}
+        except Exception:
+            pass
+
+        # 2) Massive unified snapshot (preferred for api.massive.com)
+        try:
+            data = self._request(
+                "GET",
+                "/v3/snapshot",
+                params={"ticker": ticker, "type": "stocks"},
+            )
+            results = (data or {}).get("results") if isinstance(data, dict) else None
+            first = (results[0] if isinstance(results, list) and results else {}) or {}
+
+            last_trade = first.get("last_trade") or {}
+            last_quote = first.get("last_quote") or {}
+            session = first.get("session") or {}
+
+            price = (
+                (last_trade.get("price") or last_trade.get("p"))
+                or (last_quote.get("price") or last_quote.get("p"))
+                or (session.get("last") or session.get("close") or session.get("c"))
+            )
+            return {"last_trade": last_trade, "last_quote": last_quote, "last": price, "raw": first}
+        except Exception:
             return {"last": None}
-        last_trade = data.get("lastTrade", {}) or {}
-        last_quote = data.get("lastQuote", {}) or {}
-        price = last_trade.get("p") or last_quote.get("p") or last_quote.get("last" )
-        return {
-            "last_trade": last_trade,
-            "last_quote": last_quote,
-            "last": price,
-        }
 
     def get_options_chain_snapshot(self, ticker: str) -> Dict[str, Any]:
         try:
