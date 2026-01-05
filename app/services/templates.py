@@ -126,26 +126,27 @@ def format_trade_idea_stock_only(signal: SignalCandidate, reason: str | Iterable
 
 def format_im_in(trade) -> str:
     _alert_style()  # compatibility no-op
-    instrument_type = "CALL" if getattr(trade, "direction", "bull") == "bull" else "PUT"
+    instrument_type = "CALL" if (getattr(trade, "side", "bullish") or "").startswith("bull") else "PUT"
     payload = {
         "ticker": trade.ticker,
         "instrument_type": instrument_type if getattr(trade, "option_symbol", None) else "STOCK",
-        "fill_price": _fmt_price(getattr(trade, "entry_fill", None) or getattr(trade, "entry_trigger", None)),
-        "stop_price": _fmt_price(getattr(trade, "stop", None)),
+        "fill_price": _fmt_price(getattr(trade, "entry_price", None) or getattr(trade, "entry_trigger_price", None)),
+        "stop_price": _fmt_price(getattr(trade, "stop_price", None)),
         "plan": "Trade live. Hard stop stays in.",
+        "timestamp": getattr(trade, "opened_at", None),
     }
     return render_in_alert(payload)
 
 
 def format_im_out(trade) -> str:
     _alert_style()  # compatibility no-op
-    instrument_type = "CALL" if getattr(trade, "direction", "bull") == "bull" else "PUT"
-    entry = getattr(trade, "entry_fill", None) or getattr(trade, "entry_trigger", None)
-    exit_fill = getattr(trade, "exit_fill", None) or getattr(trade, "t2", None)
+    instrument_type = "CALL" if (getattr(trade, "side", "bullish") or "").startswith("bull") else "PUT"
+    entry = getattr(trade, "entry_price", None) or getattr(trade, "entry_trigger_price", None)
+    exit_fill = getattr(trade, "last_price", None)
     pnl_pct = None
     try:
         if entry is not None and exit_fill is not None:
-            direction_mult = 1 if getattr(trade, "direction", "bull") == "bull" else -1
+            direction_mult = 1 if (getattr(trade, "side", "bullish") or "").startswith("bull") else -1
             pnl_pct = ((float(exit_fill) - float(entry)) * direction_mult / float(entry)) * 100
     except Exception:  # noqa: BLE001
         pnl_pct = None
@@ -157,6 +158,7 @@ def format_im_out(trade) -> str:
         "pnl_pct": pnl_pct,
         "pnl_abs": None,
         "reason": getattr(trade, "exit_reason", None) or "target hit",
+        "timestamp": getattr(trade, "closed_at", None),
     }
     return render_out_alert(payload)
 

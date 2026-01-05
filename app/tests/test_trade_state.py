@@ -1,4 +1,4 @@
-from app.services.trade_state import create_trade, update_trade_states, STATE_WAITING, STATE_IN, STATE_CLOSED
+from app.services.trade_state import create_trade, update_trade_states
 from app.services.setups.base import SignalCandidate
 
 
@@ -22,11 +22,13 @@ def test_state_machine_flow(session_with_db):
     trade = create_trade(session_with_db, sig)
 
     price_lookup = lambda _t: 10.1
-    updated = update_trade_states(session_with_db, price_lookup)
-    assert updated[0].state == STATE_IN
+    entries, exits = update_trade_states(session_with_db, price_lookup)
+    assert entries
+    assert entries[0].status == "OPEN"
+    assert entries[0].entry_price == price_lookup(sig.ticker)
 
     # stop hit
     price_lookup = lambda _t: 8.5
-    updated = update_trade_states(session_with_db, price_lookup)
-    assert updated[-1].state == STATE_CLOSED
-    assert updated[-1].exit_reason == "Invalidation"
+    entries, exits = update_trade_states(session_with_db, price_lookup)
+    assert exits[-1].status == "CLOSED"
+    assert exits[-1].exit_reason == "Stop-loss hit"

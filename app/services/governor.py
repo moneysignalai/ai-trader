@@ -1,14 +1,21 @@
 from datetime import datetime, timedelta, date
 from typing import Optional
+import logging
 
 from app.config import get_settings
 from app.models import Trade, GovernorCooldown
 
 
+logger = logging.getLogger(__name__)
+
+
 def allow_trade(session, ticker: str, mutate: bool = True) -> tuple[bool, Optional[str]]:
     settings = get_settings()
     now = datetime.utcnow()
-    open_trade = session.query(Trade).filter(Trade.ticker == ticker, Trade.state != "CLOSED").first()
+    open_count = session.query(Trade).filter(Trade.status == "OPEN").count()
+    if open_count > 25:
+        logger.warning("Open trade count high (%s) — restricting to fresh tickers", open_count)
+    open_trade = session.query(Trade).filter(Trade.ticker == ticker, Trade.status == "OPEN").first()
     if open_trade:
         return False, "Existing open trade"
 

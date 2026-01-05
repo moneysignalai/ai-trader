@@ -1,5 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict
+from datetime import datetime
+from typing import Any, Dict
 
 from app.models import TradeEvent
 from app.utils.dates import format_et_timestamp
