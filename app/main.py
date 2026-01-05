@@ -16,6 +16,11 @@ from app.services import universe as universe_service
 from app.services.bars import normalize_bar
 from app.services.massive_client import MassiveClient
 from app.services.feature_enricher import enrich_bars
+from app.services.db_migrate import (
+    describe_trades_schema,
+    ensure_trades_schema,
+    get_last_migration_result,
+)
 from app.services.setups.trend_pullback import TrendPullbackDetector
 from app.services.setups.breakout_volume import BreakoutVolumeDetector
 from app.services.setups.vwap_reclaim import VwapReclaimDetector
@@ -48,6 +53,21 @@ logger.info(
 )
 logger.info("DEBUG_ENDPOINTS_ENABLED=%s", settings.debug_endpoints_enabled)
 app = FastAPI(title="AI Trader Alert Engine")
+
+
+@app.on_event("startup")
+def apply_startup_migrations():
+    if not settings.db_auto_migrate:
+        logger.info("DB_AUTO_MIGRATE=false; skipping trades schema migration")
+        return
+    if not settings.database_url:
+        logger.info("No DATABASE_URL configured; skipping trades schema migration")
+        return
+    try:
+        result = ensure_trades_schema(engine)
+        logger.info("Trades schema migration summary: %s", result)
+    except Exception:  # noqa: BLE001
+        logger.exception("Trades schema migration failed but server will continue")
 
 
 @app.middleware("http")
@@ -581,6 +601,18 @@ def scan(tf: str, request: Request, session=Depends(get_session)):
             status_code=500,
             content={"status": "error", "detail": str(exc)},
         )
+
+
+@app.get("/debug/db/schema")
+def debug_db_schema(request: Request):
+    if not _debug_endpoints_enabled():
+        raise HTTPException(403, "debug endpoints disabled")
+    schema = describe_trades_schema(engine)
+    return {
+        "table_exists": schema.get("table_exists", False),
+        "columns": schema.get("columns", []),
+        "last_migration": get_last_migration_result(),
+    }
 
 
 @app.get("/debug/explain")

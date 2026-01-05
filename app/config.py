@@ -23,6 +23,7 @@ class Settings:
     timezone: str = os.getenv("TIMEZONE", "America/New_York")
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./local.db")
     db_echo: bool = os.getenv("DB_ECHO", "false").lower() == "true"
+    db_auto_migrate: bool = os.getenv("DB_AUTO_MIGRATE", "true").lower() == "true"
 
     massive_api_key: str = os.getenv("MASSIVE_API_KEY", "demo")
     massive_base_url: str = os.getenv("MASSIVE_BASE_URL", "https://api.polygon.io")

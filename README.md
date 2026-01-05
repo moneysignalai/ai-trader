@@ -129,6 +129,7 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `ALERTS_ENABLED` (true) — master switch for emitting alerts.
 - `TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram delivery controls.
 - `DATABASE_URL` — backing database for trades and events.
+- `DB_AUTO_MIGRATE` (true) — runs a safe, idempotent trades table compatibility migration on startup to add missing columns without dropping data.
 - `UNIVERSE_SIZE` (20) — how many tickers to evaluate each run.
 - `MAX_TICKERS_PER_RUN` (250) — cap on how many symbols `/scan/day` will process before exiting.
 - `MAX_RUNTIME_SECONDS` (40) — runtime guardrail for `/scan/day` based on wall-clock seconds.
@@ -148,6 +149,8 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `EXIT_TRAIL_AFTER_R` (1.0), `EXIT_TRAIL_PCT` (0.6) — trailing stop controls once price moves favorably.
 - `MASSIVE_API_KEY`, `MASSIVE_BASE_URL` — Massive API auth (Authorization header with `Bearer <key>`).
 
+Schema compatibility: when Trade model fields change across versions, `DB_AUTO_MIGRATE` (default `true`) adds missing trades columns and backfills legacy values so `/scan/day` and `/state/update` continue running without crashes.
+
 ## Endpoints
 - `GET /health` — Liveness and DB connectivity check.
 - `GET /preflight` — Returns key configuration flags and DB connectivity status.
@@ -158,6 +161,7 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `POST /debug/force-alert` — Debug-only hook to run the `/scan/day` pipeline for a single ticker.
 - `POST /debug/preview-alert` — Debug-only endpoint to send a preview of the real alert formatter for a ticker.
 - `GET /debug/explain` — Returns a dry-run explanation of a single ticker without sending Telegram.
+- `GET /debug/db/schema` — Debug-only view of the trades table schema and the last migration summary (requires `DEBUG_ENDPOINTS_ENABLED=true`).
 - `GET /debug/universe` — Debug-only summary of the current universe with a filler-ticker check.
 - `GET /debug/open-trades` — Debug-only list of open trades, guarded by `DEBUG_ENDPOINTS_ENABLED`.
 - `POST /debug/close-all-trades` — Closes every open trade for maintenance; optional `send_alerts=true` emits exit alerts.
