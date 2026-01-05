@@ -449,6 +449,7 @@ def rebuild_universe(request: Request, session=Depends(get_session)):
 
 
 def run_scan(timeframe: str, session, request_id: str | None = None):
+    timeframe = (timeframe or "day").strip() or "day"
     if not _within_rth():
         return {"message": "outside RTH"}
     client = MassiveClient()
@@ -549,13 +550,21 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
                 "reason": option_decision.reason,
             },
         )
-        trade = create_trade(
-            session,
-            signal,
-            option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
-            entry_price=last_price,
-            entry_mode=settings.entry_mode,
-        )
+        try:
+            trade = create_trade(
+                session,
+                signal,
+                option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
+                entry_price=last_price,
+                entry_mode=settings.entry_mode,
+                timeframe=timeframe,
+            )
+        except Exception as exc:  # noqa: BLE001
+            session.rollback()
+            logger.exception(
+                "Failed to create trade for ticker=%s timeframe=%s: %s", signal.ticker, timeframe, exc
+            )
+            continue
         if settings.entry_mode == "immediate" and getattr(trade, "_was_created", False):
             in_message = format_im_in(trade)
             send_or_log(
@@ -1095,6 +1104,7 @@ def debug_force_alert(
         return JSONResponse(status_code=404, content=response)
 
     signal, scored = candidate
+    timeframe = (getattr(signal, "timeframe", None) or "day").strip() or "day"
     qualifies_normally = scored.total >= used_threshold
     reasons = _top_reasons(scored)
 
@@ -1214,11 +1224,21 @@ def debug_force_alert(
         side="idea",
         payload={"message": message, "option_selected": bool(option_decision.contract)},
     )
-    create_trade(
-        session,
-        signal,
-        option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
-    )
+    try:
+        create_trade(
+            session,
+            signal,
+            option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
+            timeframe=timeframe,
+        )
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception(
+            "Failed to create trade for ticker=%s timeframe=%s from /debug/force-alert: %s",
+            signal.ticker,
+            timeframe,
+            exc,
+        )
 
     response_payload.update(
         {

@@ -15,6 +15,7 @@ def create_trade(
     option_symbol: str | None = None,
     entry_price: float | None = None,
     entry_mode: str | None = None,
+    timeframe: str | None = None,
 ) -> Trade:
     existing = (
         session.query(Trade)
@@ -30,12 +31,15 @@ def create_trade(
     trade_status = "OPEN" if (entry_mode or "confirm") == "immediate" else "PENDING"
     resolved_entry_price = entry_price if trade_status == "OPEN" else None
 
+    resolved_timeframe = (timeframe or getattr(signal, "timeframe", None) or "day").strip() or "day"
+
     trade = Trade(
         ticker=signal.ticker,
         setup=getattr(signal, "setup_name", None),
         side=side,
         status=trade_status,
         opened_at=datetime.utcnow(),
+        timeframe=resolved_timeframe,
         entry_price=resolved_entry_price,
         entry_trigger_price=getattr(signal, "entry_trigger", None),
         stop_price=getattr(signal, "stop", None),

@@ -64,6 +64,7 @@ class Trade(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     trade_uuid: Mapped[str] = mapped_column(Text, unique=True, nullable=True, default=lambda: str(uuid4()))
+    timeframe: Mapped[str] = mapped_column(String(32), nullable=False, default="day", server_default="day")
     ticker: Mapped[str] = mapped_column(String, index=True)
     setup: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     side: Mapped[str] = mapped_column(String(16))

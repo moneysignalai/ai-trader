@@ -17,6 +17,15 @@ def _signal():
     )
 
 
+def test_trade_persists_timeframe(session_with_db):
+    sig = _signal()
+    trade = create_trade(session_with_db, sig, timeframe="day")
+
+    session_with_db.commit()
+
+    assert trade.timeframe == "day"
+
+
 def test_state_machine_flow(session_with_db):
     sig = _signal()
     trade = create_trade(session_with_db, sig)
