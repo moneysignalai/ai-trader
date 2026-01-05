@@ -63,6 +63,7 @@ def create_trade(
         setup_name=setup_name,
         side=side,
         direction=side,
+        state=trade_status,
         status=trade_status,
         opened_at=datetime.utcnow(),
         timeframe=resolved_timeframe,

@@ -72,6 +72,9 @@ class Trade(Base):
     direction: Mapped[str] = mapped_column(
         String(16), nullable=False, default="bullish", server_default="bullish"
     )
+    state: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="PENDING", server_default="PENDING"
+    )
     status: Mapped[str] = mapped_column(String(16), index=True, default="PENDING")
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

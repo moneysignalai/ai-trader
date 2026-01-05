@@ -87,6 +87,40 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
             existing_columns = _existing_columns(conn, "trades")
             existing_names = {col["name"] for col in existing_columns}
 
+            required_columns = {
+                "setup",
+                "setup_name",
+                "trade_uuid",
+                "status",
+                "side",
+                "direction",
+                "opened_at",
+                "closed_at",
+                "entry_price",
+                "entry_trigger_price",
+                "stop_price",
+                "target_prices",
+                "last_price",
+                "max_favorable",
+                "exit_reason",
+                "alert_message_id",
+                "last_alert_hash",
+                "option_symbol",
+                "entry_trigger",
+                "t1",
+                "t2",
+                "timeframe",
+                "state",
+            }
+
+            extra_columns = sorted(existing_names - required_columns)
+            logger.info(
+                "Trades schema check: existing=%s required=%s extras=%s",
+                sorted(existing_names),
+                sorted(required_columns),
+                extra_columns,
+            )
+
             dialect = getattr(conn.engine, "dialect", None)
             name = getattr(dialect, "name", "") if dialect else ""
             table_ref = "public.trades" if name in {"postgresql", "postgres"} else "trades"
@@ -116,6 +150,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 "status": "status TEXT",
                 "side": "side TEXT",
                 "direction": "direction TEXT",
+                "state": "state TEXT",
                 "opened_at": "opened_at TIMESTAMPTZ",
                 "closed_at": "closed_at TIMESTAMPTZ",
                 "entry_price": "entry_price DOUBLE PRECISION",
@@ -196,6 +231,25 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                     )
                 )
                 backfilled["status"] = result.rowcount or 0
+
+            if "state" in column_ddls:
+                try:
+                    conn.execute(
+                        text(f"ALTER TABLE {table_ref} ALTER COLUMN state SET DEFAULT 'PENDING'")
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to set default for trades.state: %s", exc)
+
+                try:
+                    result = conn.execute(
+                        text(
+                            f"UPDATE {table_ref} SET state = COALESCE(status, 'PENDING') "
+                            "WHERE state IS NULL"
+                        )
+                    )
+                    backfilled["state"] = result.rowcount or 0
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to backfill trades.state: %s", exc)
 
             if "stop_price" in column_ddls and "stop" in existing_names:
                 result = conn.execute(
