@@ -87,6 +87,27 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
             existing_columns = _existing_columns(conn, "trades")
             existing_names = {col["name"] for col in existing_columns}
 
+            dialect = getattr(conn.engine, "dialect", None)
+            name = getattr(dialect, "name", "") if dialect else ""
+
+            if name in {"postgresql", "postgres"}:
+                try:
+                    rows = conn.execute(
+                        text(
+                            "SELECT column_name, data_type, is_nullable, column_default "
+                            "FROM information_schema.columns "
+                            "WHERE table_schema='public' AND table_name='trades' "
+                            "ORDER BY ordinal_position"
+                        )
+                    ).mappings()
+                    column_info = [
+                        f"{row['column_name']} (nullable={row['is_nullable']}, default={row['column_default']})"
+                        for row in rows
+                    ]
+                    logger.info("Trades schema (live DB): %s", ", ".join(column_info))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to inspect trades schema via information_schema: %s", exc)
+
             required_columns = {
                 "setup",
                 "setup_name",
@@ -98,6 +119,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 "closed_at",
                 "entry_price",
                 "entry_trigger_price",
+                "stop",
                 "stop_price",
                 "target_prices",
                 "last_price",
@@ -121,8 +143,6 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 extra_columns,
             )
 
-            dialect = getattr(conn.engine, "dialect", None)
-            name = getattr(dialect, "name", "") if dialect else ""
             table_ref = "public.trades" if name in {"postgresql", "postgres"} else "trades"
 
             entry_trigger_column = next(
@@ -155,6 +175,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 "closed_at": "closed_at TIMESTAMPTZ",
                 "entry_price": "entry_price DOUBLE PRECISION",
                 "entry_trigger_price": "entry_trigger_price DOUBLE PRECISION",
+                "stop": "stop DOUBLE PRECISION DEFAULT 0",
                 "stop_price": "stop_price DOUBLE PRECISION",
                 "target_prices": "target_prices JSONB",
                 "last_price": "last_price DOUBLE PRECISION",
@@ -250,6 +271,32 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                     backfilled["state"] = result.rowcount or 0
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Unable to backfill trades.state: %s", exc)
+
+            stop_exists = "stop" in existing_names or "stop" in summary["added_columns"]
+            if stop_exists:
+                try:
+                    result = conn.execute(
+                        text(
+                            f"UPDATE {table_ref} SET stop = COALESCE(stop, stop_price, 0) "
+                            "WHERE stop IS NULL"
+                        )
+                    )
+                    backfilled["stop"] = result.rowcount or 0
+                    logger.info("Backfilled trades.stop from stop_price/default: %s rows", backfilled["stop"])
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to backfill trades.stop: %s", exc)
+
+                if name in {"postgresql", "postgres"}:
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table_ref} ALTER COLUMN stop SET DEFAULT 0"))
+                        logger.info("Ensured trades.stop default=0")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Unable to set default for trades.stop: %s", exc)
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table_ref} ALTER COLUMN stop SET NOT NULL"))
+                        logger.info("Ensured trades.stop NOT NULL")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Unable to enforce NOT NULL on trades.stop: %s", exc)
 
             if "stop_price" in column_ddls and "stop" in existing_names:
                 result = conn.execute(

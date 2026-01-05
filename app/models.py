@@ -80,6 +80,7 @@ class Trade(Base):
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     entry_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     entry_trigger_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    stop: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
     stop_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     target_prices: Mapped[Optional[list[float]]] = mapped_column(JSON, nullable=True)
     last_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
