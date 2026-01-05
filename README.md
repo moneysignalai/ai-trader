@@ -6,7 +6,7 @@ AI Trader is an AI-first intelligence engine that scouts liquid markets, scores 
 - Curates a universe of high-volume stocks and ETFs for clean execution.
 - Evaluates bullish and bearish setups with context-aware scoring and confirmation logic.
 - Chooses between options and stock-only framing based on liquidity, cost, and clarity of risk.
-- Publishes lifecycle alerts: Trade Idea, I'M IN, and I'M OUT.
+- Publishes trade idea alerts with clear bias, triggers, invalidation, and targets.
 - Keeps risk defined with explicit entries, stops, targets, and trade states.
 
 ## System Architecture & Intelligence Flow
@@ -28,7 +28,7 @@ Distribution Channels (Telegram, Discord, Webhook)
 - **Universe Builder:** Filters to liquid, high-volume names so downstream signals have tight spreads and depth.
 - **Signal Intelligence Engine:** Scores setups with contextual features (trend, momentum, structure) to mirror a confident discretionary trader.
 - **Instrument Selection:** Chooses between options and stock based on liquidity, spreads, moneyness, and quality of fills.
-- **Trade Lifecycle Manager:** Manages state transitions from watching → I'M IN → I'M OUT while keeping stops and targets explicit.
+- **Trade Lifecycle Manager:** Monitors state transitions while keeping triggers, invalidation, and targets explicit (alerts focus on ideas only).
 - **Distribution Channels:** Delivers finished intelligence to Telegram, Discord, or webhooks. Delivery is modular; the core product is the decision engine.
 
 ## System Architecture (Technical Overview)
@@ -68,7 +68,7 @@ flowchart LR
 - Scans top-volume stocks and ETFs for high-conviction trade ideas.
 - Generates CALL and PUT option plans when contracts are liquid and fairly priced.
 - Falls back to stock-only framing when options fail affordability or liquidity checks.
-- Defines entry, stop, and target levels for every idea and tracks lifecycle events.
+- Defines triggers, invalidation levels, and targets for every idea (idea alerts only).
 - Publishes alerts to interchangeable channels (Telegram, Discord, webhook, etc.).
 
 ## Alert Formats (Trader-grade)
@@ -76,36 +76,36 @@ All timestamps surface as `MM-DD-YYYY HH:MM AM/PM ET`. Examples below use the st
 
 Stock Trade Idea
 ```
-🚨 TRADE IDEA — AMD (STOCK)
+📌 TRADE IDEA — AMD (STOCK)
+Bias: Bullish
+Trigger: 154.20
+Invalidation: 150.80
+Targets: 158.00 → 162.50
+Confidence: 8.1/10
 
-Direction: Long
-Market Context: pullback
-
-Entry: 154.20
-Stop: 150.80  (3.40 risk)
-Targets:
-• T1: 158.00
-• T2: 162.50
-
-Why stock over options:
+Context: pullback
+Rationale:
 • Options premiums elevated or expensive
 • Spread/liquidity not ideal
 • Cleaner risk with shares
 
-Execution Plan:
-Respect the stop and scale only at targets.
+Plan:
+Respect the plan and scale only at targets.
 
 Timestamp: 06-14-2024 09:32 AM ET
 ```
 
-Options Trade Idea
+Options Trade Idea (Idea-only alert)
 ```
-🚨 TRADE IDEA — NVDA (CALL)
-
-Underlying: 118.50
-Setup: breakout
+📌 TRADE IDEA — NVDA (CALL)
+Bias: Bullish
+Trigger: 120.00
+Invalidation: 115.00
+Targets: 125.00 → 130.00
 Confidence: 8.8/10
 
+Context: breakout
+Underlying: 118.50
 Contract:
 • NVDA 120.00C
 • Exp: 06-21-2024
@@ -114,38 +114,18 @@ Contract:
 • OI/Vol: 68420 / 12500
 • Spread: 8.2%
 
-Plan:
-Entry: 2.45
-Stop: 2.05
-Targets: 3.10 → 3.60
-Notes: Watch volume and respect stops.
+Notes:
+Watch volume and respect stops.
 
 Timestamp: 06-14-2024 09:30 AM ET
-```
-
-I'M IN (follow-up)
-```
-✅ I'M IN — AMD (STOCK)
-Fill: 154.30
-Risk: 150.80 (hard stop)
-Plan: Trade live. Hard stop stays in.
-Timestamp: 06-14-2024 09:45 AM ET
-```
-
-I'M OUT (follow-up)
-```
-🏁 I'M OUT — AMD (CALL)
-Exit: 158.00
-Result: 12.0% (0.18)
-Reason: target hit
-Timestamp: 06-14-2024 11:15 AM ET
 ```
 
 ## Environment Variables & Tuning
 Telegram is one delivery channel; the core product is AI signal intelligence. Defaults in parentheses.
 
 - `ENABLE_RTH_ONLY` (true) — when true, alerts only publish between 9:30 AM–4:00 PM ET.
-- `ENABLE_FOLLOW_UP_ALERTS` (false) — auto-send I'M IN / I'M OUT lifecycle alerts when trades update.
+- `ALERT_MODE` (ideas) — idea-only delivery mode; even non-idea modes currently send idea-style alerts.
+- `IDEAS_PER_RUN` (3) — cap idea alerts emitted per `/scan/day` invocation (also bounded by `MAX_ALERTS_PER_RUN`).
 - `ALERTS_ENABLED` (true) — master switch for emitting alerts.
 - `TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram delivery controls.
 - `DATABASE_URL` — backing database for trades and events.
@@ -158,15 +138,15 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `MAX_ALERTS_PER_TICKER_PER_DAY` (3) and `COOLDOWN_MINUTES` (30) — governor limits for repeated alerts.
 - `OPT_MAX_MONEYNESS_PCT` (0.12), `OPT_MAX_SPREAD_PCT` (0.20), `OPT_MIN_DTE` (5), `OPT_MAX_DTE` (21), `OPT_MIN_VOLUME` (50), `OPT_MIN_OI` (200) — option selection guards.
 - `OPT_MAX_SPREAD_PCT`, `OPT_MAX_MONEYNESS_PCT` combine with `OPT_CALL_DELTA_*` and `OPT_PUT_DELTA_*` to fence contract quality.
-- `ALERT_STYLE` — short/medium/deep copy tone.
+- `ALERT_STYLE` — short/medium/deep copy tone (kept for compatibility with idea formatting).
 - `DEBUG_ENDPOINTS_ENABLED` (false) — enables debug-only HTTP endpoints.
-- `MASSIVE_API_KEY`, `MASSIVE_BASE_URL` — Massive API auth (Authorization: Bearer <key>).
+- `MASSIVE_API_KEY`, `MASSIVE_BASE_URL` — Massive API auth (Authorization header with `Bearer <key>`).
 
 ## Endpoints
 - `GET /health` — Liveness and DB connectivity check.
 - `GET /preflight` — Returns key configuration flags and DB connectivity status.
-- `POST /scan/day` — Runs the day scan and pushes the top alert candidate.
-- `POST /state/update` — Advances trade states and sends I'M IN or I'M OUT alerts.
+- `POST /scan/day` — Runs detectors, applies gating, and sends up to `IDEAS_PER_RUN` idea alerts within governor limits.
+- `POST /state/update` — Refreshes trade state/universe bookkeeping (no signal generation or alert delivery).
 - `POST /universe/rebuild` — Rebuilds the ticker universe for future scans.
 - `POST /test/telegram` — Sends a test message to verify Telegram delivery.
 - `POST /debug/force-alert` — Debug-only hook to run the `/scan/day` pipeline for a single ticker.

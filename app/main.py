@@ -27,8 +27,6 @@ from app.services.trade_state import create_trade, update_trade_states
 from app.services.options_selector import select_option
 from app.alerts.renderer import render_in_alert, render_out_alert
 from app.services.templates import (
-    format_im_in,
-    format_im_out,
     format_trade_idea_stock_only,
     format_trade_idea_with_options,
 )
@@ -64,6 +62,10 @@ async def log_request_exceptions(request: Request, call_next):
 
 def _within_rth() -> bool:
     return not settings.enable_rth_only or is_rth_now(settings)
+
+
+def _ideas_mode_active() -> bool:
+    return (getattr(settings, "alert_mode", "ideas") or "ideas").lower() == "ideas"
 
 
 def _detectors():
@@ -321,6 +323,8 @@ def trade_in(payload: TradeInRequest, request: Request, session=Depends(get_sess
     )
     if not _within_rth():
         return {"status": "blocked", "reason": "outside RTH"}
+    if _ideas_mode_active():
+        return {"status": "suppressed", "reason": "ideas-only mode"}
 
     instrument_type = payload.instrument_type.upper()
     alert = render_in_alert(
@@ -356,6 +360,8 @@ def trade_out(payload: TradeOutRequest, request: Request, session=Depends(get_se
     )
     if not _within_rth():
         return {"status": "blocked", "reason": "outside RTH"}
+    if _ideas_mode_active():
+        return {"status": "suppressed", "reason": "ideas-only mode"}
 
     instrument_type = payload.instrument_type.upper()
     alert = render_out_alert(
@@ -437,60 +443,67 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
         processed += 1
     if not signals:
         return {"message": "no signals"}
-    # pick best signal
-    signal, score = sorted(signals, key=lambda x: x[1], reverse=True)[0]
-    logger.info("Top signal %s score=%s setup=%s", signal.ticker, score, signal.setup_name)
     if apply_limits and settings.max_alerts_per_run <= 0:
         logger.info("MAX_ALERTS_PER_RUN=%s prevents emitting alerts", settings.max_alerts_per_run)
         return {"message": "alerts capped for this run"}
-    allowed, reason = allow_trade(session, signal.ticker)
-    if not allowed:
-        return {"blocked": reason}
-    option_snapshot = client.get_options_chain_snapshot(signal.ticker)
-    option_decision = select_option(signal, option_snapshot, underlying_price=signal.entry_trigger)
-    logger.info(
-        "Option decision for %s chosen=%s reason=%s",
-        signal.ticker,
-        bool(option_decision.contract),
-        option_decision.reason,
-    )
-    if option_decision.contract:
-        instrument_type = "CALL" if signal.direction == "bull" else "PUT"
-        message = format_trade_idea_with_options(signal, option_decision.contract)
-    else:
-        instrument_type = "STOCK"
-        stock_reasons = option_decision.fallback_reasons or [
-            "Options premiums elevated or expensive",
-            "Spread/liquidity not ideal",
-            "Cleaner risk with shares",
-        ]
-        message = format_trade_idea_stock_only(signal, stock_reasons)
-    send_or_log(
-        message,
-        context={
-            "endpoint": f"/scan/{timeframe}",
-            "ticker": signal.ticker,
-            "request_id": request_id,
-        },
-    )
-    record_trade_event(
-        session,
-        ticker=signal.ticker,
-        instrument_type=instrument_type,
-        side="idea",
-        payload={
-            "message": message,
-            "option_selected": bool(option_decision.contract),
-            "reason": option_decision.reason,
-        },
-    )
-    create_trade(
-        session,
-        signal,
-        option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
-    )
-    alerts_sent += 1
-    return {"signal": signal.ticker, "score": score, "alerts_sent": alerts_sent}
+    max_ideas = settings.ideas_per_run if apply_limits else len(signals)
+    send_budget = min(settings.max_alerts_per_run, max_ideas)
+    selected = sorted(signals, key=lambda x: x[1], reverse=True)[:send_budget]
+    sent_signals: list[dict[str, object]] = []
+
+    for signal, score in selected:
+        allowed, reason = allow_trade(session, signal.ticker)
+        if not allowed:
+            logger.info("Skipping %s due to governor: %s", signal.ticker, reason)
+            continue
+        option_snapshot = client.get_options_chain_snapshot(signal.ticker)
+        option_decision = select_option(signal, option_snapshot, underlying_price=signal.entry_trigger)
+        logger.info(
+            "Option decision for %s chosen=%s reason=%s",
+            signal.ticker,
+            bool(option_decision.contract),
+            option_decision.reason,
+        )
+        if option_decision.contract:
+            instrument_type = "CALL" if signal.direction == "bull" else "PUT"
+            message = format_trade_idea_with_options(signal, option_decision.contract)
+        else:
+            instrument_type = "STOCK"
+            stock_reasons = option_decision.fallback_reasons or [
+                "Options premiums elevated or expensive",
+                "Spread/liquidity not ideal",
+                "Cleaner risk with shares",
+            ]
+            message = format_trade_idea_stock_only(signal, stock_reasons)
+        send_or_log(
+            message,
+            context={
+                "endpoint": f"/scan/{timeframe}",
+                "ticker": signal.ticker,
+                "request_id": request_id,
+            },
+        )
+        record_trade_event(
+            session,
+            ticker=signal.ticker,
+            instrument_type=instrument_type,
+            side="idea",
+            payload={
+                "message": message,
+                "option_selected": bool(option_decision.contract),
+                "reason": option_decision.reason,
+            },
+        )
+        create_trade(
+            session,
+            signal,
+            option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
+        )
+        alerts_sent += 1
+        sent_signals.append({"ticker": signal.ticker, "score": score})
+        if apply_limits and alerts_sent >= send_budget:
+            break
+    return {"signals": sent_signals, "alerts_sent": alerts_sent, "limit": send_budget}
 
 
 @app.post("/scan/{tf}")
@@ -601,57 +614,11 @@ def state_update(request: Request, session=Depends(get_session)):
         return snap.get("last", 0) or 0
     try:
         updated = update_trade_states(session, price_lookup)
-        if not settings.enable_follow_up_alerts:
-            response = {
-                "updated": len(updated),
-                "messages": 0,
-                "follow_up_alerts_enabled": False,
-            }
-            logger.info("JOB END /state/update result=%s", response)
-            return response
-
-        messages = []
-        for trade in updated:
-            instrument_type = _instrument_type_from_trade(trade)
-            if trade.state == "IN_POSITION":
-                alert = format_im_in(trade)
-                messages.append(
-                    send_or_log(
-                        alert,
-                        context={
-                            "endpoint": "/state/update",
-                            "ticker": trade.ticker,
-                            "request_id": request.headers.get("x-request-id"),
-                        },
-                    )
-                )
-                record_trade_event(
-                    session,
-                    ticker=trade.ticker,
-                    instrument_type=instrument_type,
-                    side="in",
-                    payload={"message": alert},
-                )
-            elif trade.state == "CLOSED":
-                alert = format_im_out(trade)
-                messages.append(
-                    send_or_log(
-                        alert,
-                        context={
-                            "endpoint": "/state/update",
-                            "ticker": trade.ticker,
-                            "request_id": request.headers.get("x-request-id"),
-                        },
-                    )
-                )
-                record_trade_event(
-                    session,
-                    ticker=trade.ticker,
-                    instrument_type=instrument_type,
-                    side="out",
-                    payload={"message": alert, "reason": trade.exit_reason},
-                )
-        response = {"updated": len(updated), "messages": len(messages)}
+        response = {
+            "status": "ok",
+            "updated": len(updated),
+            "messages": 0,
+        }
         logger.info("JOB END /state/update result=%s", response)
         return response
     except Exception as exc:  # noqa: BLE001

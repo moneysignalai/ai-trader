@@ -39,6 +39,7 @@ class Settings:
     max_tickers_per_run: int = int(os.getenv("MAX_TICKERS_PER_RUN", "250"))
     max_runtime_seconds: int = int(os.getenv("MAX_RUNTIME_SECONDS", "40"))
     max_alerts_per_run: int = int(os.getenv("MAX_ALERTS_PER_RUN", "3"))
+    ideas_per_run: int = int(os.getenv("IDEAS_PER_RUN", "3"))
     alert_cooldown_minutes: int = int(
         os.getenv("ALERT_COOLDOWN_MINUTES", os.getenv("TICKER_COOLDOWN_MINUTES", "15"))
     )
@@ -90,6 +91,7 @@ class Settings:
     telegram_enabled: bool = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
     alerts_enabled: bool = os.getenv("ALERTS_ENABLED", "true").lower() == "true"
     alert_style: str = os.getenv("ALERT_STYLE", "medium")
+    alert_mode: str = os.getenv("ALERT_MODE", "ideas")
     enable_follow_up_alerts: bool = os.getenv("ENABLE_FOLLOW_UP_ALERTS", "false").lower() == "true"
     debug_endpoints_enabled: bool = os.getenv("DEBUG_ENDPOINTS_ENABLED", "false").lower() == "true"
 

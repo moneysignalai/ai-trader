@@ -8,6 +8,7 @@ import httpx
 from app.config import get_settings
 from app.services.options_normalize import normalize_snapshot_response
 from app.utils.dates import et_today_date, iso_yyyy_mm_dd
+from app.utils.logging_utils import redact_url
 
 
 logger = logging.getLogger(__name__)
@@ -26,29 +27,40 @@ class MassiveClient:
         self.api_key = api_key or settings.massive_api_key
         self.timeout = timeout
         self.max_retries = max_retries
-        self.client = httpx.Client(base_url=self.base_url, timeout=timeout)
         self.headers = {"Authorization": f"Bearer {self.api_key}"}
+        self.client = httpx.Client(base_url=self.base_url, timeout=timeout, headers=self.headers)
 
     def _request(self, method: str, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         params = params or {}
-        params.setdefault("apiKey", self.api_key)
+        safe_path = redact_url(f"{self.base_url}{path}")
         for attempt in range(1, self.max_retries + 1):
             try:
-                response = self.client.request(method, path, params=params, headers=self.headers)
+                response = self.client.request(method, path, params=params)
                 if response.status_code == 429:
                     retry_after = float(response.headers.get("Retry-After", "1"))
-                    logger.warning("Rate limited on %s %s; sleeping for %ss", method, path, retry_after)
+                    logger.warning(
+                        "Rate limited on %s %s; sleeping for %ss",
+                        method,
+                        safe_path,
+                        retry_after,
+                    )
                     time.sleep(retry_after)
                     continue
                 response.raise_for_status()
                 return response.json()
             except httpx.RequestError as exc:  # network issues
-                logger.error("HTTP error for %s %s: %s", method, path, exc)
+                logger.error("HTTP error for %s %s: %s", method, safe_path, redact_url(str(exc)))
                 if attempt >= self.max_retries:
                     raise
                 time.sleep(2**attempt)
             except httpx.HTTPStatusError as exc:
-                logger.error("Bad response %s for %s %s: %s", exc.response.status_code, method, path, exc)
+                logger.error(
+                    "Bad response %s for %s %s: %s",
+                    exc.response.status_code,
+                    method,
+                    safe_path,
+                    redact_url(str(exc)),
+                )
                 if 500 <= exc.response.status_code < 600 and attempt < self.max_retries:
                     time.sleep(2**attempt)
                     continue
