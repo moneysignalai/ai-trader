@@ -48,11 +48,21 @@ def create_trade(
 
     resolved_timeframe = (timeframe or getattr(signal, "timeframe", None) or "day").strip() or "day"
 
+    logger.info(
+        "Creating trade ticker=%s side=%s direction=%s status=%s timeframe=%s",
+        signal.ticker,
+        side,
+        side,
+        trade_status,
+        resolved_timeframe,
+    )
+
     trade = Trade(
         ticker=signal.ticker,
         setup=setup_name,
         setup_name=setup_name,
         side=side,
+        direction=side,
         status=trade_status,
         opened_at=datetime.utcnow(),
         timeframe=resolved_timeframe,
