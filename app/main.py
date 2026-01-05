@@ -563,7 +563,7 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
                 "Cleaner risk with shares",
             ]
             message = format_trade_idea_stock_only(signal, stock_reasons)
-        send_or_log(
+        send_result = send_or_log(
             message,
             context={
                 "endpoint": f"/scan/{timeframe}",
@@ -590,6 +590,9 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
                 entry_price=last_price,
                 entry_mode=settings.entry_mode,
                 timeframe=timeframe,
+                telegram_msg_ids=[send_result.get("message_id")]
+                if send_result.get("message_id")
+                else None,
             )
         except Exception as exc:  # noqa: BLE001
             session.rollback()
@@ -599,7 +602,7 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
             continue
         if settings.entry_mode == "immediate" and getattr(trade, "_was_created", False):
             in_message = format_im_in(trade)
-            send_or_log(
+            in_send_result = send_or_log(
                 in_message,
                 context={
                     "endpoint": f"/scan/{timeframe}",
@@ -608,6 +611,11 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
                     "alert_type": "IN",
                 },
             )
+            message_id = in_send_result.get("message_id")
+            if message_id:
+                current_ids = list(trade.telegram_msg_ids_json or [])
+                current_ids.append(str(message_id))
+                trade.telegram_msg_ids_json = current_ids
             record_trade_event(
                 session,
                 ticker=signal.ticker,
@@ -1262,6 +1270,9 @@ def debug_force_alert(
             signal,
             option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
             timeframe=timeframe,
+            telegram_msg_ids=[send_result.get("message_id")]
+            if send_result.get("message_id")
+            else None,
         )
     except Exception as exc:  # noqa: BLE001
         session.rollback()

@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from sqlalchemy import JSON, Date, DateTime, Float, Integer, String, Text, Boolean
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -62,6 +63,8 @@ class OptionsPick(Base):
 class Trade(Base):
     __tablename__ = "trades"
 
+    telegram_json_type = JSON().with_variant(JSONB, "postgresql")
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     trade_uuid: Mapped[str] = mapped_column(Text, unique=True, nullable=True, default=lambda: str(uuid4()))
     timeframe: Mapped[str] = mapped_column(String(32), nullable=False, default="day", server_default="day")
@@ -88,6 +91,9 @@ class Trade(Base):
     exit_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     alert_message_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     last_alert_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    telegram_msg_ids_json: Mapped[list[str]] = mapped_column(
+        telegram_json_type, nullable=False, default=list, server_default="[]"
+    )
     option_symbol: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     entry_trigger: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     t1: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
