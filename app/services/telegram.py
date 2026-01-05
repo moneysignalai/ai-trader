@@ -123,12 +123,13 @@ def send_or_log(text: str, context: Dict[str, Any]) -> Dict[str, Any]:
         )
     else:
         logger.info(
-            "Telegram send ok",
+            "Telegram send ok message_id=%s", result.get("message_id"),
             extra=safe_log_extra(
                 {
                     **context,
                     "telegram_status_code": result.get("status_code"),
                     "telegram_response": _truncate(result.get("response")),
+                    "telegram_message_id": result.get("message_id"),
                 }
             ),
         )

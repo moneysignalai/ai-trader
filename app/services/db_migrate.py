@@ -133,6 +133,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 "t2",
                 "timeframe",
                 "state",
+                "telegram_msg_ids_json",
             }
 
             extra_columns = sorted(existing_names - required_columns)
@@ -163,6 +164,9 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("Unable to coerce trades.entry_trigger to double: %s", exc)
 
+            telegram_default = "'[]'::jsonb" if name in {"postgresql", "postgres"} else "'[]'"
+            telegram_type = "JSONB" if name in {"postgresql", "postgres"} else "JSON"
+
             column_ddls = {
                 "setup": "setup TEXT",
                 "setup_name": "setup_name TEXT",
@@ -188,6 +192,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 "t1": "t1 DOUBLE PRECISION",
                 "t2": "t2 DOUBLE PRECISION",
                 "timeframe": "timeframe TEXT",
+                "telegram_msg_ids_json": f"telegram_msg_ids_json {telegram_type} DEFAULT {telegram_default}",
             }
 
             for col_name, ddl in column_ddls.items():
@@ -357,6 +362,61 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                     backfilled["direction"] = result.rowcount or 0
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Unable to backfill trades.direction: %s", exc)
+
+            telegram_exists = "telegram_msg_ids_json" in existing_names or "telegram_msg_ids_json" in summary["added_columns"]
+            if telegram_exists:
+                try:
+                    result = conn.execute(
+                        text(
+                            f"UPDATE {table_ref} "
+                            "SET telegram_msg_ids_json = COALESCE(telegram_msg_ids_json, '[]'::jsonb) "
+                            "WHERE telegram_msg_ids_json IS NULL"
+                            if name in {"postgresql", "postgres"}
+                            else f"UPDATE {table_ref} SET telegram_msg_ids_json = '[]' WHERE telegram_msg_ids_json IS NULL"
+                        )
+                    )
+                    backfilled["telegram_msg_ids_json"] = result.rowcount or 0
+                    logger.info(
+                        "Backfilled trades.telegram_msg_ids_json to empty list: %s rows",
+                        backfilled.get("telegram_msg_ids_json", 0),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to backfill trades.telegram_msg_ids_json: %s", exc)
+
+                if name in {"postgresql", "postgres"}:
+                    try:
+                        conn.execute(
+                            text(
+                                f"ALTER TABLE {table_ref} ALTER COLUMN telegram_msg_ids_json SET DEFAULT {telegram_default}"
+                            )
+                        )
+                        logger.info("Ensured trades.telegram_msg_ids_json default empty list")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Unable to set default for trades.telegram_msg_ids_json: %s", exc)
+                    try:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE {table_ref} ALTER COLUMN telegram_msg_ids_json SET NOT NULL".format(
+                                    table_ref=table_ref
+                                )
+                            )
+                        )
+                        logger.info("Ensured trades.telegram_msg_ids_json NOT NULL")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Unable to enforce NOT NULL on trades.telegram_msg_ids_json: %s", exc
+                        )
+                elif name == "sqlite":
+                    try:
+                        conn.execute(
+                            text(
+                                "UPDATE {table_ref} SET telegram_msg_ids_json = '[]' WHERE telegram_msg_ids_json IS NULL".format(
+                                    table_ref=table_ref
+                                )
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("SQLite backfill for telegram_msg_ids_json failed: %s", exc)
 
             summary["backfilled"] = backfilled
             logger.info(

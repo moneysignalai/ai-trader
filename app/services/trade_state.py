@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta
-from typing import Callable, List, Tuple
+from typing import Callable, Iterable, List, Tuple
 from uuid import uuid4
 
 from app.config import get_settings
@@ -25,6 +25,7 @@ def create_trade(
     entry_price: float | None = None,
     entry_mode: str | None = None,
     timeframe: str | None = None,
+    telegram_msg_ids: Iterable[str | int] | str | int | None = None,
 ) -> Trade:
     existing = (
         session.query(Trade)
@@ -71,6 +72,13 @@ def create_trade(
         resolved_timeframe,
     )
 
+    message_ids: list[str] = []
+    if telegram_msg_ids is not None:
+        if isinstance(telegram_msg_ids, (list, tuple, set)):
+            message_ids = [str(mid) for mid in telegram_msg_ids if mid is not None]
+        else:
+            message_ids = [str(telegram_msg_ids)]
+
     trade = Trade(
         ticker=signal.ticker,
         setup=setup_name,
@@ -93,6 +101,7 @@ def create_trade(
         t1=targets[0] if len(targets) > 0 else None,
         t2=targets[1] if len(targets) > 1 else None,
         trade_uuid=str(uuid4()),
+        telegram_msg_ids_json=message_ids,
     )
     logger.info(
         "Creating trade %s tf=%s setup=%s side=%s dir=%s state=%s stop=%s stop_price=%s entry_trigger=%s",
@@ -107,6 +116,18 @@ def create_trade(
         trade.entry_trigger_price,
     )
     session.add(trade)
+
+    if trade.stop is None:
+        trade.stop = 0.0
+    if trade.stop_price is None:
+        trade.stop_price = trade.stop
+    if trade.telegram_msg_ids_json is None:
+        trade.telegram_msg_ids_json = []
+
+    assert trade.telegram_msg_ids_json is not None, "telegram_msg_ids_json must not be null"
+    assert trade.stop is not None, "trade.stop must not be null"
+    assert trade.stop_price is not None, "trade.stop_price must not be null"
+
     session.flush()
     session.refresh(trade)
     setattr(trade, "_was_created", True)
