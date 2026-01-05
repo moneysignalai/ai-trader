@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from app.config import get_settings, is_rth_now
 from app.logging_config import configure_logging
-from app.db import Base, engine, get_session
+from app.db import engine, get_session, table_exists
 from app import models
 from app.services import universe as universe_service
 from app.services.bars import normalize_bar
@@ -46,8 +46,8 @@ logger.info(
     settings.telegram_enabled,
     os.getenv("TELEGRAM_ENABLED"),
 )
+logger.info("DEBUG_ENDPOINTS_ENABLED=%s", settings.debug_endpoints_enabled)
 app = FastAPI(title="AI Trader Alert Engine")
-Base.metadata.create_all(bind=engine)
 
 
 @app.middleware("http")
@@ -199,7 +199,7 @@ def root(request: Request):
 
 
 @app.get("/health")
-def health(request: Request, session=Depends(get_session)):
+def health(request: Request):
     logger.info(
         "HIT method=%s path=%s user_agent=%s",
         request.method,
@@ -207,10 +207,13 @@ def health(request: Request, session=Depends(get_session)):
         request.headers.get("user-agent"),
     )
     try:
-        session.execute(text("SELECT 1"))
-        return {"status": "ok", "db": "ok"}
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        db_status = "ok"
     except Exception:  # noqa: BLE001
-        return {"status": "error", "db": "unavailable"}
+        db_status = "error"
+
+    return {"status": "ok", "db": db_status}
 
 
 def _env_bool(var_name: str, default: bool) -> bool:
@@ -222,6 +225,14 @@ def _env_int(var_name: str, default: int) -> int:
         return int(os.getenv(var_name, str(default)))
     except ValueError:
         return default
+
+
+def _debug_endpoints_enabled() -> bool:
+    return bool(settings.debug_endpoints_enabled)
+
+
+def _db_unavailable_response() -> dict[str, str]:
+    return {"status": "error", "detail": "db-unavailable"}
 
 
 @app.get("/preflight")
@@ -769,6 +780,101 @@ def debug_trades(session=Depends(get_session)):
         raise HTTPException(403, "forbidden")
     trades = session.execute(text("SELECT ticker,state FROM trades")).fetchall()
     return {"trades": [dict(row) for row in trades]}
+
+
+@app.get("/debug/trades/open")
+def debug_open_trades(request: Request):
+    if not _debug_endpoints_enabled():
+        raise HTTPException(403, "debug endpoints disabled")
+
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
+
+    try:
+        with engine.connect() as connection:
+            if not table_exists(connection, "trades"):
+                return {"count": 0, "trades": [], "note": "trades-table-missing"}
+
+            rows = connection.execute(
+                text(
+                    "SELECT id, ticker, status, opened_at, closed_at, exit_reason "
+                    "FROM trades WHERE status = 'OPEN'"
+                )
+            ).mappings().all()
+        return {"count": len(rows), "trades": [dict(row) for row in rows]}
+    except Exception:  # noqa: BLE001
+        logger.warning("DB unavailable for /debug/trades/open")
+        return _db_unavailable_response()
+
+
+@app.post("/debug/trades/reset")
+def debug_reset_trades(
+    request: Request,
+    mode: str = "close_all",
+    send_alerts: bool = False,
+    session=Depends(get_session),
+):
+    if not _debug_endpoints_enabled():
+        raise HTTPException(403, "debug endpoints disabled")
+
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+    )
+
+    if mode not in {"close_all", "close_stale"}:
+        raise HTTPException(400, "invalid mode")
+
+    try:
+        connection = session.connection()
+        if not table_exists(connection, "trades"):
+            return {"status": "ok", "closed_count": 0, "note": "trades-table-missing"}
+    except Exception:  # noqa: BLE001
+        logger.warning("DB unavailable for /debug/trades/reset")
+        return _db_unavailable_response()
+
+    cutoff = None
+    if mode == "close_stale":
+        cutoff = datetime.utcnow() - timedelta(hours=float(settings.exit_max_hours_open))
+
+    query = session.query(models.Trade).filter(models.Trade.status == "OPEN")
+    if cutoff:
+        query = query.filter(models.Trade.opened_at <= cutoff)
+
+    trades = query.all()
+    closed_count = 0
+    messages_sent = 0
+    now = datetime.utcnow()
+    exit_reason = "reset-close-stale" if mode == "close_stale" else "reset-close-all"
+    for trade in trades:
+        trade.status = "CLOSED"
+        trade.exit_reason = exit_reason
+        trade.closed_at = now
+        closed_count += 1
+        if send_alerts:
+            out_msg = format_im_out(trade)
+            send_or_log(
+                out_msg,
+                context={
+                    "endpoint": "/debug/trades/reset",
+                    "ticker": trade.ticker,
+                    "alert_type": "OUT",
+                },
+            )
+            messages_sent += 1
+
+    return {
+        "status": "ok",
+        "closed_count": closed_count,
+        "messages_sent": messages_sent,
+        "mode": mode,
+    }
 
 
 @app.get("/debug/signals")
