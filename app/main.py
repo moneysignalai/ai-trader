@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -27,6 +28,8 @@ from app.services.trade_state import create_trade, update_trade_states
 from app.services.options_selector import select_option
 from app.alerts.renderer import render_in_alert, render_out_alert
 from app.services.templates import (
+    format_im_in,
+    format_im_out,
     format_trade_idea_stock_only,
     format_trade_idea_with_options,
 )
@@ -135,7 +138,8 @@ def _top_reasons(scored, limit: int = 5):
 
 def _instrument_type_from_trade(trade) -> str:
     if getattr(trade, "option_symbol", None):
-        return "CALL" if getattr(trade, "direction", "bull") == "bull" else "PUT"
+        side = getattr(trade, "side", None) or getattr(trade, "direction", "bull")
+        return "CALL" if str(side).startswith("bull") else "PUT"
     return "STOCK"
 
 
@@ -471,6 +475,8 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
         if not allowed:
             logger.info("Skipping %s due to governor: %s", signal.ticker, reason)
             continue
+        snapshot = client.get_snapshot(signal.ticker) or {}
+        last_price = snapshot.get("last") or signal.entry_trigger
         option_snapshot = client.get_options_chain_snapshot(signal.ticker)
         option_decision = select_option(signal, option_snapshot, underlying_price=signal.entry_trigger)
         logger.info(
@@ -509,11 +515,31 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
                 "reason": option_decision.reason,
             },
         )
-        create_trade(
+        trade = create_trade(
             session,
             signal,
             option_symbol=option_decision.contract.get("symbol") if option_decision.contract else None,
+            entry_price=last_price,
+            entry_mode=settings.entry_mode,
         )
+        if settings.entry_mode == "immediate":
+            in_message = format_im_in(trade)
+            send_or_log(
+                in_message,
+                context={
+                    "endpoint": f"/scan/{timeframe}",
+                    "ticker": signal.ticker,
+                    "request_id": request_id,
+                    "alert_type": "IN",
+                },
+            )
+            record_trade_event(
+                session,
+                ticker=signal.ticker,
+                instrument_type=instrument_type,
+                side="in",
+                payload={"message": in_message, "reason": "immediate entry"},
+            )
         alerts_sent += 1
         sent_signals.append({"ticker": signal.ticker, "score": score})
         if apply_limits and alerts_sent >= send_budget:
@@ -623,6 +649,54 @@ def debug_universe(session=Depends(get_session)):
     }
 
 
+@app.get("/debug/open-trades")
+def debug_open_trades(session=Depends(get_session)):
+    if not settings.debug_endpoints_enabled:
+        raise HTTPException(403, "debug endpoints disabled")
+    trades = session.query(models.Trade).filter(models.Trade.status == "OPEN").all()
+    sample = [
+        {
+            "ticker": trade.ticker,
+            "status": trade.status,
+            "opened_at": trade.opened_at,
+            "entry_price": trade.entry_price,
+            "entry_trigger_price": trade.entry_trigger_price,
+            "stop_price": trade.stop_price,
+            "target_prices": trade.target_prices,
+            "last_price": trade.last_price,
+        }
+        for trade in trades[:50]
+    ]
+    return {"count": len(trades), "sample": sample}
+
+
+@app.post("/debug/close-all-trades")
+def debug_close_all_trades(
+    request: Request,
+    reason: str = "manual-reset",
+    send_alerts: bool = False,
+    session=Depends(get_session),
+):
+    if not settings.debug_endpoints_enabled:
+        raise HTTPException(403, "debug endpoints disabled")
+    trades = session.query(models.Trade).filter(models.Trade.status == "OPEN").all()
+    messages = []
+    now = datetime.utcnow()
+    for trade in trades:
+        trade.status = "CLOSED"
+        trade.exit_reason = reason
+        trade.closed_at = now
+        if send_alerts:
+            out_msg = format_im_out(trade)
+            send_or_log(
+                out_msg,
+                context={"endpoint": "/debug/close-all-trades", "ticker": trade.ticker, "alert_type": "OUT"},
+            )
+            messages.append(out_msg)
+    session.commit()
+    return {"closed": len(trades), "messages_sent": len(messages)}
+
+
 @app.post("/state/update")
 def state_update(request: Request, session=Depends(get_session)):
     logger.info(
@@ -639,12 +713,45 @@ def state_update(request: Request, session=Depends(get_session)):
         return snap.get("last", 0) or 0
     try:
         tickers = universe_service.build_universe(session, client=client)
-        updated = update_trade_states(session, price_lookup)
+        entries, exits = update_trade_states(session, price_lookup, settings=settings)
+        messages = 0
+        for entry in entries:
+            in_msg = format_im_in(entry)
+            send_or_log(
+                in_msg,
+                context={"endpoint": "/state/update", "ticker": entry.ticker, "alert_type": "IN"},
+            )
+            record_trade_event(
+                session,
+                ticker=entry.ticker,
+                instrument_type=_instrument_type_from_trade(entry),
+                side="in",
+                payload={"message": in_msg, "reason": "triggered"},
+            )
+            messages += 1
+
+        for exit in exits:
+            out_msg = format_im_out(exit)
+            send_or_log(
+                out_msg,
+                context={"endpoint": "/state/update", "ticker": exit.ticker, "alert_type": "OUT"},
+            )
+            record_trade_event(
+                session,
+                ticker=exit.ticker,
+                instrument_type=_instrument_type_from_trade(exit),
+                side="out",
+                payload={"message": out_msg, "reason": exit.exit_reason},
+            )
+            messages += 1
+        session.commit()
         response = {
             "status": "ok",
             "universe_count": len(tickers),
-            "updated_trades": len(updated),
-            "messages": 0,
+            "updated_trades": len(entries) + len(exits),
+            "entries": len(entries),
+            "exits": len(exits),
+            "messages": messages,
         }
         logger.info("JOB END /state/update result=%s", response)
         return response

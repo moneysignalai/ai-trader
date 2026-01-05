@@ -142,6 +142,10 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `OPT_MAX_SPREAD_PCT`, `OPT_MAX_MONEYNESS_PCT` combine with `OPT_CALL_DELTA_*` and `OPT_PUT_DELTA_*` to fence contract quality.
 - `ALERT_STYLE` — short/medium/deep copy tone (kept for compatibility with idea formatting).
 - `DEBUG_ENDPOINTS_ENABLED` (false) — enables debug-only HTTP endpoints.
+- `ENTRY_MODE` (confirm) — `confirm` waits for price to reclaim/trigger before sending “I’m in”; `immediate` treats IDEA as an entry and sets the entry price from the latest snapshot.
+- `EXIT_MAX_HOURS_OPEN` (6) — maximum hours to keep a trade open before a time-based exit.
+- `EXIT_STOP_ATR_MULT` (1.5), `EXIT_TARGET_R_MULT_1` (1.0), `EXIT_TARGET_R_MULT_2` (2.0) — exit heuristics for managing stops/targets.
+- `EXIT_TRAIL_AFTER_R` (1.0), `EXIT_TRAIL_PCT` (0.6) — trailing stop controls once price moves favorably.
 - `MASSIVE_API_KEY`, `MASSIVE_BASE_URL` — Massive API auth (Authorization header with `Bearer <key>`).
 
 ## Endpoints
@@ -155,10 +159,16 @@ Telegram is one delivery channel; the core product is AI signal intelligence. De
 - `POST /debug/preview-alert` — Debug-only endpoint to send a preview of the real alert formatter for a ticker.
 - `GET /debug/explain` — Returns a dry-run explanation of a single ticker without sending Telegram.
 - `GET /debug/universe` — Debug-only summary of the current universe with a filler-ticker check.
+- `GET /debug/open-trades` — Debug-only list of open trades, guarded by `DEBUG_ENDPOINTS_ENABLED`.
+- `POST /debug/close-all-trades` — Closes every open trade for maintenance; optional `send_alerts=true` emits exit alerts.
 
 ### Universe lifecycle
 - `/state/update` (or `/universe/rebuild`) pulls Massive reference tickers, ranks by most recent grouped volume (stocks + ETFs, locale=US), enforces `ALWAYS_INCLUDE_TICKERS`, removes `EXCLUDE_TICKERS`, and stores the top `UNIVERSE_SIZE` symbols.
 - `/scan/day` will automatically rebuild the universe if it is empty or still contains placeholder `FILLxx` symbols and will never scan placeholder tickers.
+
+### Trade lifecycle
+- `/scan/day` emits IDEA alerts when setups clear gating and creates/open trades. If `ENTRY_MODE=immediate`, the IDEA also establishes the entry price and sends the “I’m in” alert.
+- `/state/update` refreshes the universe, updates every OPEN trade with fresh prices, confirms entries when prices cross triggers (in confirm mode), and evaluates stops/targets/time/trailing exits. When exits trigger, it marks the trade closed and sends the “I’m out” alert.
 
 ### Smoke test locally
 ```bash

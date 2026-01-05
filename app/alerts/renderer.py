@@ -117,7 +117,7 @@ def render_stock_alert(payload: Dict[str, Any]) -> str:
     ts = _timestamp(payload.get("timestamp"))
 
     lines = [
-        f"📌 TRADE IDEA — {ticker} (STOCK)",
+        f"📌 IDEA ALERT — {ticker} (STOCK)",
         f"Bias: {bias}",
         f"Trigger: {trigger}",
         f"Invalidation: {invalidation}",
@@ -172,7 +172,7 @@ def render_option_alert(payload: Dict[str, Any]) -> str:
     ts = _timestamp(payload.get("timestamp"))
 
     lines = [
-        f"📌 TRADE IDEA — {ticker} ({contract_type})",
+        f"📌 IDEA ALERT — {ticker} ({contract_type})",
         f"Bias: {bias}",
         f"Trigger: {trigger}",
         f"Invalidation: {invalidation_text}",
@@ -206,9 +206,8 @@ def render_in_alert(payload: Dict[str, Any]) -> str:
     ts = _timestamp(payload.get("timestamp"))
 
     lines = [
-        f"📌 TRADE UPDATE — {ticker} ({instrument_type})",
-        f"Status: Entered position",
-        f"Fill: {fill}",
+        f"✅ I'M IN — {ticker} ({instrument_type})",
+        f"Entry: {fill}",
         f"Risk guardrail: {stop_price}",
         f"Plan: {plan}",
         f"Timestamp: {ts}",
@@ -232,8 +231,7 @@ def render_out_alert(payload: Dict[str, Any]) -> str:
         result_line = f"Result: {pnl_pct}% ({pnl_abs})"
 
     lines = [
-        f"📌 TRADE UPDATE — {ticker} ({instrument_type})",
-        f"Status: Closed",
+        f"🏁 I'M OUT — {ticker} ({instrument_type})",
         f"Exit: {exit_price}",
         result_line,
         f"Reason: {reason}",

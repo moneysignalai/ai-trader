@@ -1,6 +1,8 @@
 import os
 from datetime import datetime, time
 from functools import lru_cache
+from datetime import datetime, time
+import os
 
 import pytz
 from dotenv import load_dotenv
@@ -98,6 +100,13 @@ class Settings:
     alert_mode: str = os.getenv("ALERT_MODE", "ideas")
     enable_follow_up_alerts: bool = os.getenv("ENABLE_FOLLOW_UP_ALERTS", "false").lower() == "true"
     debug_endpoints_enabled: bool = os.getenv("DEBUG_ENDPOINTS_ENABLED", "false").lower() == "true"
+    entry_mode: str = os.getenv("ENTRY_MODE", "confirm").lower()
+    exit_max_hours_open: float = float(os.getenv("EXIT_MAX_HOURS_OPEN", "6"))
+    exit_stop_atr_mult: float = float(os.getenv("EXIT_STOP_ATR_MULT", "1.5"))
+    exit_target_r_mult_1: float = float(os.getenv("EXIT_TARGET_R_MULT_1", "1.0"))
+    exit_target_r_mult_2: float = float(os.getenv("EXIT_TARGET_R_MULT_2", "2.0"))
+    exit_trail_after_r: float = float(os.getenv("EXIT_TRAIL_AFTER_R", "1.0"))
+    exit_trail_pct: float = float(os.getenv("EXIT_TRAIL_PCT", "0.6"))
 
 
 @lru_cache()

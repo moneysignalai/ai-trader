@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta
 from app.services.governor import allow_trade
-from app.services.trade_state import create_trade, STATE_WAITING
+from datetime import datetime, timedelta
+
+from app.services.governor import allow_trade
+from app.services.trade_state import create_trade
 from app.services.setups.base import SignalCandidate
 
 

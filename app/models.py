@@ -1,5 +1,6 @@
 from datetime import datetime, date
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
 from sqlalchemy import JSON, Date, DateTime, Float, Integer, String, Text, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
@@ -61,24 +62,26 @@ class OptionsPick(Base):
 class Trade(Base):
     __tablename__ = "trades"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid4()))
     ticker: Mapped[str] = mapped_column(String, index=True)
-    timeframe: Mapped[str] = mapped_column(String(16))
-    setup_name: Mapped[str] = mapped_column(String(64))
-    direction: Mapped[str] = mapped_column(String(8))
-    state: Mapped[str] = mapped_column(String(32), index=True)
-    entry_trigger: Mapped[float] = mapped_column(Float)
-    stop: Mapped[float] = mapped_column(Float)
-    t1: Mapped[float] = mapped_column(Float)
-    t2: Mapped[float] = mapped_column(Float)
-    entry_fill: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    exit_fill: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    option_symbol: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    setup: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    side: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), index=True, default="OPEN")
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    entered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    exited_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    exit_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    telegram_msg_ids_json: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    entry_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    entry_trigger_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    stop_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    target_prices: Mapped[Optional[list[float]]] = mapped_column(JSON, nullable=True)
+    last_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_favorable: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    exit_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    alert_message_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    last_alert_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    option_symbol: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    entry_trigger: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    t1: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    t2: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class AlertSent(Base):
