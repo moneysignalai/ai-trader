@@ -1,8 +1,11 @@
+import logging
 from datetime import datetime, timedelta
 from typing import Callable, List, Tuple
 
 from app.config import get_settings
 from app.models import Trade
+
+logger = logging.getLogger(__name__)
 
 
 def create_trade(
@@ -14,26 +17,30 @@ def create_trade(
 ) -> Trade:
     existing = (
         session.query(Trade)
-        .filter(Trade.ticker == signal.ticker, Trade.status == "OPEN")
+        .filter(Trade.ticker == signal.ticker, Trade.status.in_(["OPEN", "PENDING"]))
         .first()
     )
     if existing:
+        setattr(existing, "_was_created", False)
         return existing
 
     targets = getattr(signal, "targets", None) or []
     side = "bullish" if getattr(signal, "direction", "bull") == "bull" else "bearish"
+    trade_status = "OPEN" if (entry_mode or "confirm") == "immediate" else "PENDING"
+    resolved_entry_price = entry_price if trade_status == "OPEN" else None
+
     trade = Trade(
         ticker=signal.ticker,
         setup=getattr(signal, "setup_name", None),
         side=side,
-        status="OPEN",
+        status=trade_status,
         opened_at=datetime.utcnow(),
-        entry_price=entry_price if (entry_mode or "confirm") == "immediate" else None,
+        entry_price=resolved_entry_price,
         entry_trigger_price=getattr(signal, "entry_trigger", None),
         stop_price=getattr(signal, "stop", None),
         target_prices=targets if isinstance(targets, list) else [],
         last_price=entry_price,
-        max_favorable=0.0,
+        max_favorable=0.0 if resolved_entry_price is not None else None,
         option_symbol=option_symbol,
         entry_trigger=getattr(signal, "entry_trigger", None),
         t1=targets[0] if len(targets) > 0 else None,
@@ -42,6 +49,13 @@ def create_trade(
     session.add(trade)
     session.commit()
     session.refresh(trade)
+    setattr(trade, "_was_created", True)
+
+    if trade_status == "OPEN":
+        logger.info(
+            "TRADE TRANSITION ticker=%s from=PENDING to=OPEN reason=immediate_entry",
+            trade.ticker,
+        )
     return trade
 
 
@@ -82,18 +96,27 @@ def update_trade_states(
     entries: List[Trade] = []
     exits: List[Trade] = []
     now = datetime.utcnow()
-    trades = session.query(Trade).filter(Trade.status == "OPEN").all()
+    trades = (
+        session.query(Trade)
+        .filter(Trade.status.in_(["PENDING", "OPEN"]))
+        .all()
+    )
     for trade in trades:
         price = price_lookup(trade.ticker)
         trade.last_price = price
 
-        if trade.entry_price is None and settings.entry_mode == "confirm":
+        if trade.status == "PENDING" and settings.entry_mode == "confirm":
             trigger = trade.entry_trigger_price or trade.entry_trigger
-            if trigger is not None:
-                if _target_hit(trade, price, trigger):
-                    trade.entry_price = price
-                    trade.max_favorable = 0.0
-                    entries.append(trade)
+            if trigger is not None and _target_hit(trade, price, trigger):
+                trade.entry_price = price
+                trade.max_favorable = 0.0
+                trade.status = "OPEN"
+                trade.opened_at = now
+                entries.append(trade)
+                logger.info(
+                    "TRADE TRANSITION ticker=%s from=PENDING to=OPEN reason=entry_confirmed",
+                    trade.ticker,
+                )
 
         risk = _risk_amount(trade)
         fallback_targets: list[float] = []
@@ -110,18 +133,18 @@ def update_trade_states(
             trade.max_favorable = favorable
 
         exit_reason: str | None = None
-        if trade.entry_price is not None:
+        if trade.status == "OPEN" and trade.entry_price is not None:
             if _stop_hit(trade, price):
-                exit_reason = "Stop-loss hit"
+                exit_reason = "stop"
             elif targets:
                 if targets and _target_hit(trade, price, targets[0]):
-                    exit_reason = "Target 1 hit"
+                    exit_reason = "target1"
                 if exit_reason is None and len(targets) > 1 and _target_hit(trade, price, targets[1]):
-                    exit_reason = "Target 2 hit"
+                    exit_reason = "target2"
             if exit_reason is None and trade.entry_price and settings.exit_max_hours_open:
                 elapsed_hours = (now - trade.opened_at) / timedelta(hours=1)
                 if elapsed_hours >= settings.exit_max_hours_open:
-                    exit_reason = "Time-based exit"
+                    exit_reason = "time"
             if exit_reason is None and risk and favorable is not None:
                 if favorable >= settings.exit_trail_after_r * risk:
                     keep_pct = 1 - settings.exit_trail_pct
@@ -134,15 +157,22 @@ def update_trade_states(
                         else trade.entry_price - favorable * keep_pct
                     )
                     if (trade.side or "bullish").startswith("bull") and price <= trail_level:
-                        exit_reason = "Trailing stop"
+                        exit_reason = "trailing_stop"
                     if (trade.side or "bullish").startswith("bear") and price >= trail_level:
-                        exit_reason = "Trailing stop"
+                        exit_reason = "trailing_stop"
 
         if exit_reason:
+            previous_status = trade.status
             trade.status = "CLOSED"
             trade.exit_reason = exit_reason
             trade.closed_at = now
             exits.append(trade)
+            logger.info(
+                "TRADE TRANSITION ticker=%s from=%s to=CLOSED reason=%s",
+                trade.ticker,
+                previous_status,
+                exit_reason,
+            )
 
     session.commit()
     return entries, exits

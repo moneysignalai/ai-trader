@@ -31,4 +31,4 @@ def test_state_machine_flow(session_with_db):
     price_lookup = lambda _t: 8.5
     entries, exits = update_trade_states(session_with_db, price_lookup)
     assert exits[-1].status == "CLOSED"
-    assert exits[-1].exit_reason == "Stop-loss hit"
+    assert exits[-1].exit_reason == "stop"

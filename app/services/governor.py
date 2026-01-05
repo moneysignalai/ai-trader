@@ -12,10 +12,18 @@ logger = logging.getLogger(__name__)
 def allow_trade(session, ticker: str, mutate: bool = True) -> tuple[bool, Optional[str]]:
     settings = get_settings()
     now = datetime.utcnow()
-    open_count = session.query(Trade).filter(Trade.status == "OPEN").count()
+    open_count = (
+        session.query(Trade)
+        .filter(Trade.status.in_(["OPEN", "PENDING"]))
+        .count()
+    )
     if open_count > 25:
         logger.warning("Open trade count high (%s) — restricting to fresh tickers", open_count)
-    open_trade = session.query(Trade).filter(Trade.ticker == ticker, Trade.status == "OPEN").first()
+    open_trade = (
+        session.query(Trade)
+        .filter(Trade.ticker == ticker, Trade.status.in_(["OPEN", "PENDING"]))
+        .first()
+    )
     if open_trade:
         return False, "Existing open trade"
 

@@ -18,6 +18,9 @@ def _parse_float(value: str | None, default: float) -> float:
         return default
 
 
+VALID_ENTRY_MODES = {"confirm", "immediate"}
+
+
 class Settings:
     env: str = os.getenv("ENV", "dev")
     timezone: str = os.getenv("TIMEZONE", "America/New_York")
@@ -113,6 +116,11 @@ class Settings:
 @lru_cache()
 def get_settings() -> Settings:
     settings = Settings()
+    raw_entry_mode = os.getenv("ENTRY_MODE", "confirm")
+    normalized_entry_mode = raw_entry_mode.lower()
+    if normalized_entry_mode not in VALID_ENTRY_MODES:
+        normalized_entry_mode = "confirm"
+    settings.entry_mode = normalized_entry_mode
     settings.min_signal_score = _parse_float(
         os.getenv("MIN_SIGNAL_SCORE"),
         _parse_float(os.getenv("MIN_SCORE_DAY"), 78.0),

@@ -52,6 +52,9 @@ logger.info(
     os.getenv("TELEGRAM_ENABLED"),
 )
 logger.info("DEBUG_ENDPOINTS_ENABLED=%s", settings.debug_endpoints_enabled)
+logger.info(
+    "Entry mode: %s (ENTRY_MODE=%s)", settings.entry_mode, os.getenv("ENTRY_MODE")
+)
 app = FastAPI(title="AI Trader Alert Engine")
 
 
@@ -553,7 +556,7 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
             entry_price=last_price,
             entry_mode=settings.entry_mode,
         )
-        if settings.entry_mode == "immediate":
+        if settings.entry_mode == "immediate" and getattr(trade, "_was_created", False):
             in_message = format_im_in(trade)
             send_or_log(
                 in_message,
@@ -711,6 +714,123 @@ def debug_open_trades(session=Depends(get_session)):
         for trade in trades[:50]
     ]
     return {"count": len(trades), "sample": sample}
+
+
+@app.post("/debug/force-entry")
+def debug_force_entry(ticker: str, request: Request, session=Depends(get_session)):
+    if not settings.debug_endpoints_enabled:
+        raise HTTPException(403, "debug endpoints disabled")
+
+    ticker = ticker.upper()
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s ticker=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+        ticker,
+    )
+
+    trade = (
+        session.query(models.Trade)
+        .filter(models.Trade.ticker == ticker, models.Trade.status == "PENDING")
+        .order_by(models.Trade.opened_at.desc())
+        .first()
+    )
+    if not trade:
+        raise HTTPException(404, "no pending trade found")
+
+    client = MassiveClient()
+    snapshot = client.get_snapshot(ticker) or {}
+    entry_price = snapshot.get("last") or trade.entry_trigger_price or trade.entry_trigger
+    if entry_price is None:
+        raise HTTPException(400, "no price available for ticker")
+
+    trade.entry_price = entry_price
+    trade.last_price = entry_price
+    trade.status = "OPEN"
+    trade.opened_at = datetime.utcnow()
+    session.commit()
+    session.refresh(trade)
+
+    logger.info(
+        "TRADE TRANSITION ticker=%s from=PENDING to=OPEN reason=debug_force_entry",
+        trade.ticker,
+    )
+
+    in_msg = format_im_in(trade)
+    send_or_log(
+        in_msg,
+        context={"endpoint": "/debug/force-entry", "ticker": ticker, "alert_type": "IN"},
+    )
+    record_trade_event(
+        session,
+        ticker=ticker,
+        instrument_type=_instrument_type_from_trade(trade),
+        side="in",
+        payload={"message": in_msg, "reason": "debug_force_entry"},
+    )
+    session.commit()
+    return {"status": "ok", "ticker": ticker, "entry_price": entry_price}
+
+
+@app.post("/debug/force-exit")
+def debug_force_exit(
+    ticker: str,
+    request: Request,
+    reason: str = "manual",
+    session=Depends(get_session),
+):
+    if not settings.debug_endpoints_enabled:
+        raise HTTPException(403, "debug endpoints disabled")
+
+    ticker = ticker.upper()
+    logger.info(
+        "HIT method=%s path=%s user_agent=%s ticker=%s",
+        request.method,
+        request.url.path,
+        request.headers.get("user-agent"),
+        ticker,
+    )
+
+    trade = (
+        session.query(models.Trade)
+        .filter(models.Trade.ticker == ticker, models.Trade.status == "OPEN")
+        .order_by(models.Trade.opened_at.desc())
+        .first()
+    )
+    if not trade:
+        raise HTTPException(404, "no open trade found")
+
+    client = MassiveClient()
+    snapshot = client.get_snapshot(ticker) or {}
+    last_price = snapshot.get("last") or trade.last_price or trade.entry_price
+    trade.last_price = last_price
+    trade.status = "CLOSED"
+    trade.exit_reason = reason or "manual"
+    trade.closed_at = datetime.utcnow()
+    session.commit()
+    session.refresh(trade)
+
+    logger.info(
+        "TRADE TRANSITION ticker=%s from=OPEN to=CLOSED reason=%s",
+        trade.ticker,
+        trade.exit_reason,
+    )
+
+    out_msg = format_im_out(trade)
+    send_or_log(
+        out_msg,
+        context={"endpoint": "/debug/force-exit", "ticker": ticker, "alert_type": "OUT"},
+    )
+    record_trade_event(
+        session,
+        ticker=ticker,
+        instrument_type=_instrument_type_from_trade(trade),
+        side="out",
+        payload={"message": out_msg, "reason": trade.exit_reason},
+    )
+    session.commit()
+    return {"status": "ok", "ticker": ticker, "exit_reason": trade.exit_reason, "last_price": last_price}
 
 
 @app.post("/debug/close-all-trades")
