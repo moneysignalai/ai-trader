@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import logging
 from typing import Any
 
 from sqlalchemy import text
@@ -90,6 +89,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
 
             column_ddls = {
                 "setup": "setup TEXT",
+                "trade_uuid": "trade_uuid TEXT",
                 "status": "status TEXT",
                 "side": "side TEXT",
                 "opened_at": "opened_at TIMESTAMPTZ",
@@ -113,6 +113,14 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 conn.execute(text(f"ALTER TABLE public.trades ADD COLUMN IF NOT EXISTS {ddl}"))
                 if col_name not in existing_names:
                     summary["added_columns"].append(col_name)
+
+            if "trade_uuid" in column_ddls:
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_trade_uuid "
+                        "ON public.trades (trade_uuid)"
+                    )
+                )
 
             backfilled: dict[str, int] = {}
 

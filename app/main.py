@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from app.config import get_settings, is_rth_now
 from app.logging_config import configure_logging
-from app.db import engine, get_session, table_exists
+from app.db import SessionLocal, engine, get_session, table_exists
 from app import models
 from app.services import universe as universe_service
 from app.services.bars import normalize_bar
@@ -582,28 +582,32 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
 
 
 @app.post("/scan/{tf}")
-def scan(tf: str, request: Request, session=Depends(get_session)):
+def scan(tf: str, request: Request):
     logger.info(
         "HIT method=%s path=%s user_agent=%s",
         request.method,
         request.url.path,
         request.headers.get("user-agent"),
     )
+    session = SessionLocal()
     if tf not in {"scalp", "day", "swing"}:
+        session.close()
         raise HTTPException(400, "invalid timeframe")
-    if tf != "day":
-        return run_scan(tf, session, request.headers.get("x-request-id"))
-    logger.info("JOB START /scan/day")
+    logger.info("JOB START /scan/%s", tf)
     try:
         result = run_scan(tf, session, request.headers.get("x-request-id"))
-        logger.info("JOB END /scan/day result=%s", result)
+        session.commit()
+        logger.info("JOB END /scan/%s result=%s", tf, result)
         return result
     except Exception as exc:  # noqa: BLE001
-        logger.exception("JOB ERROR /scan/day")
+        logger.exception("JOB ERROR /scan/%s", tf)
+        session.rollback()
         return JSONResponse(
             status_code=500,
             content={"status": "error", "detail": str(exc)},
         )
+    finally:
+        session.close()
 
 
 @app.get("/debug/db/schema")
@@ -861,7 +865,7 @@ def debug_close_all_trades(
 
 
 @app.post("/state/update")
-def state_update(request: Request, session=Depends(get_session)):
+def state_update(request: Request):
     logger.info(
         "HIT method=%s path=%s user_agent=%s",
         request.method,
@@ -869,6 +873,7 @@ def state_update(request: Request, session=Depends(get_session)):
         request.headers.get("user-agent"),
     )
     logger.info("JOB START /state/update")
+    session = SessionLocal()
     client = MassiveClient()
 
     def price_lookup(ticker: str):
@@ -920,10 +925,13 @@ def state_update(request: Request, session=Depends(get_session)):
         return response
     except Exception as exc:  # noqa: BLE001
         logger.exception("JOB ERROR /state/update")
+        session.rollback()
         return JSONResponse(
             status_code=500,
             content={"status": "error", "detail": str(exc)},
         )
+    finally:
+        session.close()
 
 
 @app.get("/debug/trades")
