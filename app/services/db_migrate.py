@@ -115,6 +115,7 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                 "trade_uuid": "trade_uuid TEXT",
                 "status": "status TEXT",
                 "side": "side TEXT",
+                "direction": "direction TEXT",
                 "opened_at": "opened_at TIMESTAMPTZ",
                 "closed_at": "closed_at TIMESTAMPTZ",
                 "entry_price": "entry_price DOUBLE PRECISION",
@@ -235,6 +236,26 @@ def ensure_trades_schema(engine: Engine) -> dict[str, Any]:
                         conn.execute(text(f"ALTER TABLE {table_ref} ALTER COLUMN timeframe SET NOT NULL"))
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("Unable to enforce NOT NULL on trades.timeframe: %s", exc)
+
+            direction_exists = "direction" in existing_names or "direction" in summary["added_columns"]
+            if direction_exists:
+                try:
+                    conn.execute(
+                        text(f"ALTER TABLE {table_ref} ALTER COLUMN direction SET DEFAULT 'bullish'")
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to set default for trades.direction: %s", exc)
+
+                try:
+                    result = conn.execute(
+                        text(
+                            f"UPDATE {table_ref} SET direction = COALESCE(side, 'bullish') "
+                            "WHERE direction IS NULL"
+                        )
+                    )
+                    backfilled["direction"] = result.rowcount or 0
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unable to backfill trades.direction: %s", exc)
 
             summary["backfilled"] = backfilled
             logger.info(
