@@ -62,7 +62,8 @@ class OptionsPick(Base):
 class Trade(Base):
     __tablename__ = "trades"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid4()))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_uuid: Mapped[str] = mapped_column(Text, unique=True, nullable=True, default=lambda: str(uuid4()))
     ticker: Mapped[str] = mapped_column(String, index=True)
     setup: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     side: Mapped[str] = mapped_column(String(16))

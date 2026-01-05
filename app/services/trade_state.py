@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 from typing import Callable, List, Tuple
+from uuid import uuid4
 
 from app.config import get_settings
 from app.models import Trade
@@ -45,9 +46,10 @@ def create_trade(
         entry_trigger=getattr(signal, "entry_trigger", None),
         t1=targets[0] if len(targets) > 0 else None,
         t2=targets[1] if len(targets) > 1 else None,
+        trade_uuid=str(uuid4()),
     )
     session.add(trade)
-    session.commit()
+    session.flush()
     session.refresh(trade)
     setattr(trade, "_was_created", True)
 
@@ -174,5 +176,4 @@ def update_trade_states(
                 exit_reason,
             )
 
-    session.commit()
     return entries, exits
