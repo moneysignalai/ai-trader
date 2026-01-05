@@ -120,34 +120,50 @@ Watch volume and respect stops.
 Timestamp: 06-14-2024 09:30 AM ET
 ```
 
-## Environment Variables & Tuning
-Telegram is one delivery channel; the core product is AI signal intelligence. Defaults in parentheses.
+Alert Lifecycle Examples
+```
+📌 TRADE IDEA — AMD (STOCK)
+Bias: Bullish
+Trigger: 154.20
+Invalidation: 150.80
+Targets: 158.00 → 162.50
+Timestamp: 06-14-2024 09:32 AM ET
 
-- `ENABLE_RTH_ONLY` (true) — when true, alerts only publish between 9:30 AM–4:00 PM ET.
-- `ALERT_MODE` (ideas) — idea-only delivery mode; even non-idea modes currently send idea-style alerts.
-- `IDEAS_PER_RUN` (3) — cap idea alerts emitted per `/scan/day` invocation (also bounded by `MAX_ALERTS_PER_RUN`).
-- `ALERTS_ENABLED` (true) — master switch for emitting alerts.
-- `TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram delivery controls.
+✅ I'M IN — AMD (STOCK)
+Fill: 154.25
+Stop: 150.80
+Timestamp: 06-14-2024 09:35 AM ET
+
+🏁 I'M OUT — AMD (STOCK)
+Exit: 158.05
+PnL: +2.5%
+Reason: target1
+Timestamp: 06-14-2024 10:22 AM ET
+```
+
+## Environment Variables & Tuning
+Telegram is one delivery channel; the core product is AI signal intelligence. Defaults are shown in parentheses.
+
+**Required**
 - `DATABASE_URL` — backing database for trades and events.
-- `DB_AUTO_MIGRATE` (true) — runs a safe, idempotent trades table compatibility migration on startup to add missing columns without dropping data.
-- `UNIVERSE_SIZE` (20) — how many tickers to evaluate each run.
-- `MAX_TICKERS_PER_RUN` (250) — cap on how many symbols `/scan/day` will process before exiting.
-- `MAX_RUNTIME_SECONDS` (40) — runtime guardrail for `/scan/day` based on wall-clock seconds.
-- `MAX_ALERTS_PER_RUN` (3) — how many alerts `/scan/day` can emit in one invocation.
-- `ALERT_COOLDOWN_MINUTES` (15) — suppress alerts for tickers alerted within this cooldown window.
-- `MIN_SIGNAL_SCORE` (78.0 by default) — minimum score for a setup to alert; accepts whole numbers or floats.
-- `MAX_ALERTS_PER_TICKER_PER_DAY` (3) and `COOLDOWN_MINUTES` (30) — governor limits for repeated alerts.
-- `ALWAYS_INCLUDE_TICKERS` (SPY,QQQ,IWM,DIA,XLK,XLF,XLV,XLE,XLI,XLY,XLP,XLU,XLB,XLC,XBI,SMH) — tickers forced into the universe even if volume ranks lower.
-- `EXCLUDE_TICKERS` (empty) — comma-separated symbols to omit from the universe.
-- `OPT_MAX_MONEYNESS_PCT` (0.12), `OPT_MAX_SPREAD_PCT` (0.20), `OPT_MIN_DTE` (5), `OPT_MAX_DTE` (21), `OPT_MIN_VOLUME` (50), `OPT_MIN_OI` (200) — option selection guards.
-- `OPT_MAX_SPREAD_PCT`, `OPT_MAX_MONEYNESS_PCT` combine with `OPT_CALL_DELTA_*` and `OPT_PUT_DELTA_*` to fence contract quality.
-- `ALERT_STYLE` — short/medium/deep copy tone (kept for compatibility with idea formatting).
-- `DEBUG_ENDPOINTS_ENABLED` (false) — enables debug-only HTTP endpoints.
-- `ENTRY_MODE` (confirm) — `confirm` waits for price to reclaim/trigger before sending “I’m in”; `immediate` treats IDEA as an entry and sets the entry price from the latest snapshot.
-- `EXIT_MAX_HOURS_OPEN` (6) — maximum hours to keep a trade open before a time-based exit.
-- `EXIT_STOP_ATR_MULT` (1.5), `EXIT_TARGET_R_MULT_1` (1.0), `EXIT_TARGET_R_MULT_2` (2.0) — exit heuristics for managing stops/targets.
-- `EXIT_TRAIL_AFTER_R` (1.0), `EXIT_TRAIL_PCT` (0.6) — trailing stop controls once price moves favorably.
-- `MASSIVE_API_KEY`, `MASSIVE_BASE_URL` — Massive API auth (Authorization header with `Bearer <key>`).
+- `MASSIVE_API_KEY` — Massive API bearer token.
+- `TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — enable and route Telegram delivery.
+
+**Recommended**
+- `ENABLE_RTH_ONLY` (true) — gate alerts to 9:30 AM–4:00 PM ET.
+- `MIN_SIGNAL_SCORE` (78.0) — minimum score for a setup to alert.
+- `IDEAS_PER_RUN` (3) and `MAX_ALERTS_PER_RUN` (3) — cap idea volume for `/scan/day`.
+- `ENTRY_MODE` (confirm) — `confirm` waits for the trigger; `immediate` opens the trade instantly and fires “I’m in”.
+- `ALERT_MODE` (ideas) — idea-only delivery mode.
+
+**Advanced**
+- `DB_AUTO_MIGRATE` (true) — safely adds missing trades columns without dropping data.
+- `UNIVERSE_SIZE` (20), `MAX_TICKERS_PER_RUN` (250), `MAX_RUNTIME_SECONDS` (40) — universe sizing and runtime guardrails.
+- `ALERT_COOLDOWN_MINUTES` (15), `MAX_ALERTS_PER_TICKER_PER_DAY` (3), `COOLDOWN_MINUTES` (30) — governor limits for repeated alerts.
+- `EXIT_MAX_HOURS_OPEN` (6), `EXIT_TARGET_R_MULT_*`, `EXIT_TRAIL_*`, `EXIT_STOP_ATR_MULT` — exit heuristics.
+- Options filters: `OPTIONS_ENABLED`, `OPTIONS_ONLY_IF_SCORE_AT_LEAST`, `OPT_*` deltas/volume/spread/moneyness caps.
+- `DEBUG_ENDPOINTS_ENABLED` (false) — enable debug-only HTTP endpoints (including force-entry/force-exit).
+- `MASSIVE_BASE_URL`, `ALWAYS_INCLUDE_TICKERS`, `EXCLUDE_TICKERS`, `ALERT_STYLE`, and other tuning levers remain available for fine-grained control.
 
 Schema compatibility: when Trade model fields change across versions, `DB_AUTO_MIGRATE` (default `true`) adds missing trades columns and backfills legacy values so `/scan/day` and `/state/update` continue running without crashes.
 
@@ -160,6 +176,8 @@ Schema compatibility: when Trade model fields change across versions, `DB_AUTO_M
 - `POST /test/telegram` — Sends a test message to verify Telegram delivery.
 - `POST /debug/force-alert` — Debug-only hook to run the `/scan/day` pipeline for a single ticker.
 - `POST /debug/preview-alert` — Debug-only endpoint to send a preview of the real alert formatter for a ticker.
+- `POST /debug/force-entry` — Marks the latest pending trade for a ticker as entered and sends “I’m in” (requires `DEBUG_ENDPOINTS_ENABLED=true`).
+- `POST /debug/force-exit` — Forces an open trade to close with a custom reason and sends “I’m out” (requires `DEBUG_ENDPOINTS_ENABLED=true`).
 - `GET /debug/explain` — Returns a dry-run explanation of a single ticker without sending Telegram.
 - `GET /debug/db/schema` — Debug-only view of the trades table schema and the last migration summary (requires `DEBUG_ENDPOINTS_ENABLED=true`).
 - `GET /debug/universe` — Debug-only summary of the current universe with a filler-ticker check.
@@ -171,8 +189,9 @@ Schema compatibility: when Trade model fields change across versions, `DB_AUTO_M
 - `/scan/day` will automatically rebuild the universe if it is empty or still contains placeholder `FILLxx` symbols and will never scan placeholder tickers.
 
 ### Trade lifecycle
-- `/scan/day` emits IDEA alerts when setups clear gating and creates/open trades. If `ENTRY_MODE=immediate`, the IDEA also establishes the entry price and sends the “I’m in” alert.
-- `/state/update` refreshes the universe, updates every OPEN trade with fresh prices, confirms entries when prices cross triggers (in confirm mode), and evaluates stops/targets/time/trailing exits. When exits trigger, it marks the trade closed and sends the “I’m out” alert.
+- `/scan/day` emits IDEA alerts when setups clear gating and always persists a trade row (pending in confirm mode, open in immediate mode).
+- `/state/update` refreshes the universe, updates every PENDING/OPEN trade with fresh prices, confirms entries when prices cross triggers (in confirm mode), and evaluates stops/targets/time/trailing exits. When exits trigger, it marks the trade closed and sends the “I’m out” alert.
+- “I’m in” and “I’m out” alerts are driven by `/state/update` — run it frequently (e.g., cron every 1 minute) to avoid stale states.
 
 ### Smoke test locally
 ```bash

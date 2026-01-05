@@ -66,7 +66,7 @@ class Trade(Base):
     ticker: Mapped[str] = mapped_column(String, index=True)
     setup: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     side: Mapped[str] = mapped_column(String(16))
-    status: Mapped[str] = mapped_column(String(16), index=True, default="OPEN")
+    status: Mapped[str] = mapped_column(String(16), index=True, default="PENDING")
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     entry_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
