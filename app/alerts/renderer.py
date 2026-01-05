@@ -98,45 +98,37 @@ def _reasons(reasons: Iterable[str], limit: int = 3) -> List[str]:
 
 def render_stock_alert(payload: Dict[str, Any]) -> str:
     ticker = payload.get("ticker", "-")
-    direction = payload.get("direction", "Long").title()
+    bias = payload.get("bias", "Bullish").title()
     market_context = payload.get("market_context") or "setup"
-    entry = _fmt_price(payload.get("entry"))
-    stop_val = payload.get("stop")
-    stop = _fmt_price(stop_val)
-    try:
-        risk_abs_val = abs(float(payload.get("entry")) - float(stop_val)) if stop_val is not None else None
-    except Exception:  # noqa: BLE001
-        risk_abs_val = None
-    risk_abs = _fmt_price(risk_abs_val) if risk_abs_val is not None else "-"
+    trigger = _fmt_price(payload.get("trigger"))
+    invalidation = _fmt_price(payload.get("invalidation"))
     targets = payload.get("targets") or []
     t1 = _fmt_price(targets[0]) if len(targets) > 0 else "-"
     t2 = _fmt_price(targets[1]) if len(targets) > 1 else "-"
     reasons = _reasons(payload.get("reasons", []), limit=3)
+    confidence = payload.get("confidence") or "-"
     if not reasons:
         reasons = [
             "Options premiums elevated or expensive",
             "Spread/liquidity not ideal",
             "Cleaner risk with shares",
         ]
-    execution_plan = payload.get("execution_plan") or "Respect the stop and size appropriately."
+    execution_plan = payload.get("execution_plan") or "Respect the plan and size appropriately."
     ts = _timestamp(payload.get("timestamp"))
 
     lines = [
-        f"🚨 TRADE IDEA — {ticker} (STOCK)",
+        f"📌 TRADE IDEA — {ticker} (STOCK)",
+        f"Bias: {bias}",
+        f"Trigger: {trigger}",
+        f"Invalidation: {invalidation}",
+        f"Targets: {t1} → {t2}",
+        f"Confidence: {confidence}/10",
         "",
-        f"Direction: {direction}",
-        f"Market Context: {market_context}",
-        "",
-        f"Entry: {entry}",
-        f"Stop: {stop}  ({risk_abs} risk)",
-        "Targets:",
-        f"• T1: {t1}",
-        f"• T2: {t2}",
-        "",
-        "Why stock over options:",
+        f"Context: {market_context}",
+        "Rationale:",
         *[f"• {reason}" for reason in reasons],
         "",
-        "Execution Plan:",
+        "Plan:",
         execution_plan,
         "",
         f"Timestamp: {ts}",
@@ -147,6 +139,7 @@ def render_stock_alert(payload: Dict[str, Any]) -> str:
 def render_option_alert(payload: Dict[str, Any]) -> str:
     ticker = payload.get("ticker", "-")
     setup = payload.get("setup") or "setup"
+    bias = payload.get("bias", "Bullish").title()
     confidence_raw = payload.get("confidence")
     try:
         confidence = round(float(confidence_raw), 1)
@@ -168,9 +161,9 @@ def render_option_alert(payload: Dict[str, Any]) -> str:
     spread_pct = _fmt_percent(spread_pct_val * 100 if isinstance(spread_pct_val, (int, float)) else spread_pct_val)
 
     plan = payload.get("plan", {})
-    entry = _fmt_price(plan.get("entry"))
-    stop = plan.get("stop") or plan.get("risk_rule")
-    stop_text = stop if isinstance(stop, str) else _fmt_price(stop)
+    trigger = _fmt_price(plan.get("entry") or payload.get("trigger"))
+    invalidation = plan.get("stop") or plan.get("risk_rule") or payload.get("invalidation")
+    invalidation_text = invalidation if isinstance(invalidation, str) else _fmt_price(invalidation)
     targets = plan.get("targets") or []
     t1 = _fmt_price(targets[0]) if len(targets) > 0 else _fmt_price(plan.get("t1"))
     t2 = _fmt_price(targets[1]) if len(targets) > 1 else _fmt_price(plan.get("t2"))
@@ -179,12 +172,15 @@ def render_option_alert(payload: Dict[str, Any]) -> str:
     ts = _timestamp(payload.get("timestamp"))
 
     lines = [
-        f"🚨 TRADE IDEA — {ticker} ({contract_type})",
-        "",
-        f"Underlying: {underlying_price}",
-        f"Setup: {setup}",
+        f"📌 TRADE IDEA — {ticker} ({contract_type})",
+        f"Bias: {bias}",
+        f"Trigger: {trigger}",
+        f"Invalidation: {invalidation_text}",
+        f"Targets: {t1} → {t2}",
         f"Confidence: {confidence}/10",
         "",
+        f"Context: {setup}",
+        f"Underlying: {underlying_price}",
         "Contract:",
         f"• {contract_ticker} {strike}{contract_type[0].upper() if contract_type else ''}",
         f"• Exp: {expiration}",
@@ -193,11 +189,8 @@ def render_option_alert(payload: Dict[str, Any]) -> str:
         f"• OI/Vol: {oi} / {vol}",
         f"• Spread: {spread_pct}%",
         "",
-        "Plan:",
-        f"Entry: {entry}",
-        f"Stop: {stop_text}",
-        f"Targets: {t1} → {t2}",
-        f"Notes: {notes}",
+        "Notes:",
+        notes,
         "",
         f"Timestamp: {ts}",
     ]
@@ -213,9 +206,10 @@ def render_in_alert(payload: Dict[str, Any]) -> str:
     ts = _timestamp(payload.get("timestamp"))
 
     lines = [
-        f"✅ I'M IN — {ticker} ({instrument_type})",
+        f"📌 TRADE UPDATE — {ticker} ({instrument_type})",
+        f"Status: Entered position",
         f"Fill: {fill}",
-        f"Risk: {stop_price} (hard stop)",
+        f"Risk guardrail: {stop_price}",
         f"Plan: {plan}",
         f"Timestamp: {ts}",
     ]
@@ -238,7 +232,8 @@ def render_out_alert(payload: Dict[str, Any]) -> str:
         result_line = f"Result: {pnl_pct}% ({pnl_abs})"
 
     lines = [
-        f"🏁 I'M OUT — {ticker} ({instrument_type})",
+        f"📌 TRADE UPDATE — {ticker} ({instrument_type})",
+        f"Status: Closed",
         f"Exit: {exit_price}",
         result_line,
         f"Reason: {reason}",

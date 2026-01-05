@@ -1,4 +1,5 @@
 from datetime import datetime
+from datetime import datetime
 from typing import List
 
 from app.models import Trade

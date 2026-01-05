@@ -25,6 +25,11 @@ def _alert_style() -> str:
     return style if style in {"short", "medium", "deep"} else "medium"
 
 
+def _alert_mode() -> str:
+    settings = get_settings()
+    return (getattr(settings, "alert_mode", "ideas") or "ideas").lower()
+
+
 def _fmt_price(value: float | None) -> float | None:
     if value is None:
         return None
@@ -55,6 +60,7 @@ def _reasons_list(reasons: Iterable[str] | str | None, default: List[str]) -> Li
 
 def format_trade_idea_with_options(signal: SignalCandidate, contract: dict) -> str:
     _alert_style()  # retained for compatibility
+    _alert_mode()  # retained for compatibility
     score_raw = None
     if isinstance(signal.features, dict):
         score_raw = signal.features.get("score")
@@ -65,6 +71,7 @@ def format_trade_idea_with_options(signal: SignalCandidate, contract: dict) -> s
 
     payload = {
         "ticker": signal.ticker,
+        "bias": "Bullish" if signal.direction == "bull" else "Bearish",
         "setup": _market_context(signal.setup_name),
         "confidence": confidence,
         "underlying_price": _fmt_price(getattr(signal, "entry_trigger", None)),
@@ -84,6 +91,7 @@ def format_trade_idea_with_options(signal: SignalCandidate, contract: dict) -> s
 
 def format_trade_idea_stock_only(signal: SignalCandidate, reason: str | Iterable[str]) -> str:
     _alert_style()  # compatibility no-op
+    _alert_mode()  # compatibility no-op
     reasons = _reasons_list(
         reason,
         [
@@ -92,18 +100,26 @@ def format_trade_idea_stock_only(signal: SignalCandidate, reason: str | Iterable
             "Cleaner risk with shares",
         ],
     )
+    score_raw = None
+    if isinstance(signal.features, dict):
+        score_raw = signal.features.get("score")
+    try:
+        confidence = round(float(score_raw) / 10, 1) if score_raw is not None else 7.5
+    except (TypeError, ValueError):
+        confidence = 7.5
     payload = {
         "ticker": signal.ticker,
-        "direction": "Long" if signal.direction == "bull" else "Short",
+        "bias": "Bullish" if signal.direction == "bull" else "Bearish",
         "market_context": _market_context(signal.setup_name),
-        "entry": _fmt_price(signal.entry_trigger),
-        "stop": _fmt_price(signal.stop),
+        "trigger": _fmt_price(signal.entry_trigger),
+        "invalidation": _fmt_price(signal.stop),
         "targets": [
             _fmt_price(signal.targets[0]) if signal.targets else None,
             _fmt_price(signal.targets[1]) if signal.targets and len(signal.targets) > 1 else None,
         ],
         "reasons": reasons,
-        "execution_plan": "Respect the stop and scale only at targets.",
+        "execution_plan": "Respect the plan and scale only at targets.",
+        "confidence": confidence,
     }
     return render_stock_alert(payload)
 
