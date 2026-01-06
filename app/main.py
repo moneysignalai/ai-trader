@@ -926,8 +926,31 @@ def state_update(request: Request):
     client = MassiveClient()
 
     def price_lookup(ticker: str):
-        snap = client.get_snapshot(ticker)
-        return snap.get("last", 0) or 0
+        snap = client.unified_snapshot_single_ticker(ticker, type="stocks")
+        if isinstance(snap, dict):
+            last = snap.get("last") or snap.get("last_price") or snap.get("price")
+            if last is not None:
+                price = float(last)
+                logger.info("Price lookup: ticker=%s source=snapshot price=%s", ticker, price)
+                return price
+
+        px = client.last_close_from_aggregates(
+            ticker=ticker,
+            lookback_days=5,
+            timespan="minute",
+            multiplier=1,
+        )
+        if px is not None:
+            price = float(px)
+            logger.info(
+                "Price lookup: ticker=%s source=aggregates_fallback price=%s",
+                ticker,
+                price,
+            )
+            return price
+
+        logger.warning("Price lookup: ticker=%s source=missing price=0", ticker)
+        return 0.0
     try:
         tickers = universe_service.build_universe(session, client=client)
         entries, exits = update_trade_states(session, price_lookup, settings=settings)

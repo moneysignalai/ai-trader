@@ -188,12 +188,16 @@ def update_trade_states(
     skipped_missing_price = 0
     skipped_missing_trigger = 0
     for trade in trades:
-        price = _coerce_float(price_lookup(trade.ticker))
+        raw_price = price_lookup(trade.ticker)
+        price = _coerce_float(raw_price)
         trade.last_price = price if price is not None else None
 
-        if price is None:
+        if not price or price <= 0:
             skipped_missing_price += 1
-            logger.warning("No price for ticker=%s; skipping trade_state update", trade.ticker)
+            logger.warning(
+                "Skipping trade update due to missing price",
+                extra={"ticker": trade.ticker, "trade_id": trade.id},
+            )
             continue
 
         if trade.status == "PENDING" and settings.entry_mode == "confirm":
