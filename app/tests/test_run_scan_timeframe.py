@@ -28,6 +28,9 @@ def test_run_scan_passes_timeframe(monkeypatch, session_with_db):
         def get_options_chain_snapshot(self, _ticker):
             return {}
 
+        def unified_snapshot_single_ticker(self, _ticker, type="stocks"):
+            return None
+
     class DummyDecision:
         contract = None
         reason = ""
