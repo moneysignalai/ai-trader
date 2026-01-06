@@ -138,7 +138,7 @@ class MassiveClient:
 
         return tickers
 
-    def get_snapshot(self, ticker: str) -> Dict[str, Any]:
+    def get_snapshot(self, ticker: str) -> Optional[Dict[str, Any]]:
         """
         Return a normalized stock snapshot dict with a stable `last` field.
 
@@ -166,23 +166,67 @@ class MassiveClient:
             data = self._request(
                 "GET",
                 "/v3/snapshot",
-                params={"ticker": ticker, "type": "stocks"},
+                params={"ticker.any_of": ticker, "type": "stocks", "limit": 1},
             )
-            results = (data or {}).get("results") if isinstance(data, dict) else None
-            first = (results[0] if isinstance(results, list) and results else {}) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Unified snapshot unavailable for %s: %s", ticker, exc)
+            return None
 
-            last_trade = first.get("last_trade") or {}
-            last_quote = first.get("last_quote") or {}
-            session = first.get("session") or {}
+        payload: Dict[str, Any] = data if isinstance(data, dict) else {}
+        results = payload.get("results")
+        request_id = payload.get("request_id")
 
-            price = (
-                (last_trade.get("price") or last_trade.get("p"))
-                or (last_quote.get("price") or last_quote.get("p"))
-                or (session.get("last") or session.get("close") or session.get("c"))
+        if not isinstance(results, list) or not results:
+            logger.warning(
+                "Unified snapshot missing results",
+                extra={"ticker": ticker, "type": "stocks", "request_id": request_id},
             )
-            return {"last_trade": last_trade, "last_quote": last_quote, "last": price, "raw": first}
-        except Exception:
-            return {"last": None}
+            return None
+
+        match = next(
+            (row for row in results if row.get("ticker") == ticker and row.get("type") == "stocks"),
+            None,
+        )
+
+        if not isinstance(match, dict):
+            logger.warning(
+                "Unified snapshot no match",
+                extra={"ticker": ticker, "type": "stocks", "request_id": request_id},
+            )
+            return None
+
+        if "error" in match or "message" in match:
+            logger.warning(
+                "Unified snapshot returned error",
+                extra={
+                    "ticker": ticker,
+                    "type": "stocks",
+                    "request_id": request_id,
+                    "error": match.get("error") or match.get("message"),
+                },
+            )
+            return None
+
+        last_trade = match.get("last_trade") or {}
+        last_quote = match.get("last_quote") or {}
+        session = match.get("session") or {}
+        price = (
+            (last_trade.get("price") or last_trade.get("p"))
+            or (last_quote.get("price") or last_quote.get("p"))
+            or (session.get("last") or session.get("close") or session.get("c"))
+        )
+
+        logger.info(
+            "Unified snapshot ok",
+            extra={
+                "ticker": ticker,
+                "type": "stocks",
+                "market_status": match.get("market_status"),
+                "price": price,
+            },
+        )
+
+        return {"last_trade": last_trade, "last_quote": last_quote, "last": price, "raw": match}
 
     def get_options_chain_snapshot(self, ticker: str) -> Dict[str, Any]:
         try:
