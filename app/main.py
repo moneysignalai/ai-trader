@@ -30,7 +30,7 @@ from app.services.setups.reversal_divergence import ReversalDivergenceDetector
 from app.services.scoring import score_signal
 from app.services.governor import allow_trade
 from app.services.trade_state import create_trade, update_trade_states
-from app.services.options_selector import select_option
+from app.services.options_selector import OptionDecision, select_option
 from app.alerts.renderer import render_in_alert, render_out_alert
 from app.services.templates import (
     format_im_in,
@@ -91,6 +91,128 @@ async def log_request_exceptions(request: Request, call_next):
 
 def _within_rth() -> bool:
     return not settings.enable_rth_only or is_rth_now(settings)
+
+
+def _extract_snapshot_price(snap: dict | None) -> float | None:
+    if not isinstance(snap, dict):
+        return None
+
+    price = snap.get("last") or snap.get("last_price") or snap.get("price")
+    if price is None:
+        last_trade = snap.get("last_trade") if isinstance(snap.get("last_trade"), dict) else {}
+        last_quote = snap.get("last_quote") if isinstance(snap.get("last_quote"), dict) else {}
+        session = snap.get("session") if isinstance(snap.get("session"), dict) else {}
+        price = (
+            last_trade.get("price")
+            or last_trade.get("p")
+            or last_quote.get("price")
+            or last_quote.get("p")
+            or session.get("last")
+            or session.get("close")
+            or session.get("c")
+        )
+
+    try:
+        return float(price) if price is not None else None
+    except (TypeError, ValueError):  # noqa: PERF203
+        return None
+
+
+def get_maintenance_price(ticker: str, client: MassiveClient) -> float:
+    snap = client.unified_snapshot_single_ticker(ticker, type="stocks")
+    price = _extract_snapshot_price(snap)
+    if price is not None:
+        logger.info(
+            "Price lookup: ticker=%s kind=maintenance source=unified_snapshot price=%s",
+            ticker,
+            price,
+        )
+        return price
+
+    legacy_snap = client.get_snapshot(ticker) or {}
+    legacy_price = _extract_snapshot_price(legacy_snap)
+    if legacy_price is not None:
+        logger.info(
+            "Price lookup: ticker=%s kind=maintenance source=snapshot price=%s",
+            ticker,
+            legacy_price,
+        )
+        return legacy_price
+
+    px = client.last_close_from_aggregates(
+        ticker=ticker,
+        lookback_days=5,
+        timespan="minute",
+        multiplier=1,
+    )
+    if px is not None:
+        price = float(px)
+        logger.info(
+            "Price lookup: ticker=%s kind=maintenance source=aggregates_fallback price=%s",
+            ticker,
+            price,
+        )
+        return price
+
+    logger.warning("Price lookup: ticker=%s kind=maintenance source=missing price=0", ticker)
+    return 0.0
+
+
+def get_execution_price(ticker: str, client: MassiveClient) -> float | None:
+    snap = client.unified_snapshot_single_ticker(ticker, type="stocks")
+    price = _extract_snapshot_price(snap)
+    if price is not None:
+        logger.info(
+            "Price lookup: ticker=%s kind=execution source=unified_snapshot price=%s",
+            ticker,
+            price,
+        )
+        return price
+
+    legacy_snap = client.get_snapshot(ticker) or {}
+    legacy_price = _extract_snapshot_price(legacy_snap)
+    if legacy_price is not None:
+        logger.info(
+            "Price lookup: ticker=%s kind=execution source=snapshot price=%s",
+            ticker,
+            legacy_price,
+        )
+        return legacy_price
+
+    logger.warning(
+        "Price lookup: ticker=%s kind=execution source=missing price=None", ticker
+    )
+    return None
+
+
+def _resolve_option_decision(signal, client: MassiveClient, option_snapshot, settings):
+    market_open = is_rth_now(settings)
+
+    if market_open:
+        underlying_price = get_execution_price(signal.ticker, client)
+        if underlying_price is None:
+            logger.warning(
+                "Option decision blocked: ticker=%s market_open=True reason=Realtime price unavailable",
+                signal.ticker,
+            )
+            return (
+                OptionDecision(
+                    None,
+                    0,
+                    reason="Realtime price unavailable",
+                    fallback_reasons=[
+                        "Realtime price unavailable",
+                        "Cleaner risk with shares",
+                    ],
+                ),
+                None,
+                market_open,
+            )
+    else:
+        underlying_price = get_maintenance_price(signal.ticker, client)
+
+    decision = select_option(signal, option_snapshot, underlying_price=underlying_price)
+    return decision, underlying_price, market_open
 
 
 def _ideas_mode_active() -> bool:
@@ -542,10 +664,15 @@ def run_scan(timeframe: str, session, request_id: str | None = None):
         if not allowed:
             logger.info("Skipping %s due to governor: %s", signal.ticker, reason)
             continue
-        snapshot = client.get_snapshot(signal.ticker) or {}
-        last_price = snapshot.get("last") or signal.entry_trigger
         option_snapshot = client.get_options_chain_snapshot(signal.ticker)
-        option_decision = select_option(signal, option_snapshot, underlying_price=signal.entry_trigger)
+        option_decision, underlying_price, market_open = _resolve_option_decision(
+            signal, client, option_snapshot, settings
+        )
+        last_price = underlying_price
+        if last_price is None and not market_open:
+            last_price = get_maintenance_price(signal.ticker, client)
+        if last_price is None:
+            last_price = signal.entry_trigger
         logger.info(
             "Option decision for %s chosen=%s reason=%s",
             signal.ticker,
@@ -926,31 +1053,7 @@ def state_update(request: Request):
     client = MassiveClient()
 
     def price_lookup(ticker: str):
-        snap = client.unified_snapshot_single_ticker(ticker, type="stocks")
-        if isinstance(snap, dict):
-            last = snap.get("last") or snap.get("last_price") or snap.get("price")
-            if last is not None:
-                price = float(last)
-                logger.info("Price lookup: ticker=%s source=snapshot price=%s", ticker, price)
-                return price
-
-        px = client.last_close_from_aggregates(
-            ticker=ticker,
-            lookback_days=5,
-            timespan="minute",
-            multiplier=1,
-        )
-        if px is not None:
-            price = float(px)
-            logger.info(
-                "Price lookup: ticker=%s source=aggregates_fallback price=%s",
-                ticker,
-                price,
-            )
-            return price
-
-        logger.warning("Price lookup: ticker=%s source=missing price=0", ticker)
-        return 0.0
+        return get_maintenance_price(ticker, client)
     try:
         tickers = universe_service.build_universe(session, client=client)
         entries, exits = update_trade_states(session, price_lookup, settings=settings)
@@ -1172,7 +1275,9 @@ def debug_force_alert(
     reasons = _top_reasons(scored)
 
     option_snapshot = client.get_options_chain_snapshot(signal.ticker)
-    option_decision = select_option(signal, option_snapshot, underlying_price=signal.entry_trigger)
+    option_decision, _, _ = _resolve_option_decision(
+        signal, client, option_snapshot, settings
+    )
     logger.info(
         "Option decision for %s chosen=%s reason=%s",
         signal.ticker,
@@ -1348,9 +1453,13 @@ def debug_preview_alert(ticker: str, request: Request):
             content={"status": "error", "detail": str(exc)},
         )
 
-    snapshot = client.get_snapshot(ticker) or {}
+    market_open = is_rth_now(settings)
     option_snapshot = client.get_options_chain_snapshot(ticker)
-    underlying_price = snapshot.get("last")
+    underlying_price = (
+        get_execution_price(ticker, client)
+        if market_open
+        else get_maintenance_price(ticker, client)
+    )
 
     header_lines = [
         "🧪 PREVIEW ALERT (NOT A LIVE TRADE)",
@@ -1377,8 +1486,8 @@ def debug_preview_alert(ticker: str, request: Request):
             ]
         )
 
-        option_decision = select_option(
-            signal, option_snapshot, underlying_price=underlying_price or signal.entry_trigger
+        option_decision, _, _ = _resolve_option_decision(
+            signal, client, option_snapshot, settings
         )
         logger.info(
             "Option decision for %s chosen=%s reason=%s",
