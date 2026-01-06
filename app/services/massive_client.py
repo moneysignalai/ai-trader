@@ -31,7 +31,14 @@ class MassiveClient:
         self.headers = {"Authorization": f"Bearer {self.api_key}"}
         self.client = httpx.Client(base_url=self.base_url, timeout=timeout, headers=self.headers)
 
-    def _request(self, method: str, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        log_errors: bool = True,
+    ) -> Any:
         params = params or {}
         safe_path = redact_url(f"{self.base_url}{path}")
         for attempt in range(1, self.max_retries + 1):
@@ -55,13 +62,14 @@ class MassiveClient:
                     raise
                 time.sleep(2**attempt)
             except httpx.HTTPStatusError as exc:
-                logger.error(
-                    "Bad response %s for %s %s: %s",
-                    exc.response.status_code,
-                    method,
-                    safe_path,
-                    redact_url(str(exc)),
-                )
+                if log_errors:
+                    logger.error(
+                        "Bad response %s for %s %s: %s",
+                        exc.response.status_code,
+                        method,
+                        safe_path,
+                        redact_url(str(exc)),
+                    )
                 if 500 <= exc.response.status_code < 600 and attempt < self.max_retries:
                     time.sleep(2**attempt)
                     continue
@@ -198,7 +206,9 @@ class MassiveClient:
             data = self._request(
                 "GET",
                 "/v3/snapshot",
-                params={"ticker": ticker, "type": type, "limit": 1},
+                # Unified snapshot lexicographic search uses `ticker`, but we want an exact match
+                params={"ticker.any_of": ticker, "type": type, "limit": 1},
+                log_errors=False,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
