@@ -295,44 +295,14 @@ class MassiveClient:
         return {"last_trade": last_trade, "last_quote": last_quote, "last": price, "raw": match}
 
     def massive_stock_snapshot_price(self, ticker: str) -> Optional[float]:
-        path = f"/v3/snapshot/stocks/{ticker}"
-        try:
-            data = self._request("GET", path)
-        except Exception as exc:  # noqa: BLE001
-            self._log_snapshot_failure("massive_stock_snapshot_price", path, exc)
+        snap = self.unified_snapshot_single_ticker(ticker, type="stocks")
+        if not snap:
             return None
 
-        price_sources = [
-            ("results", 0, "last", "price"),
-            ("results", 0, "lastPrice"),
-            ("results", 0, "last", "p"),
-            ("result", "last", "price"),
-            ("data", "last", "price"),
-            ("ticker", "lastTrade", "p"),
-            ("day", "c"),
-        ]
-
-        for path_keys in price_sources:
-            value: Any = data
-            for key in path_keys:
-                if isinstance(key, int):
-                    if isinstance(value, list) and len(value) > key:
-                        value = value[key]
-                    else:
-                        value = None
-                        break
-                else:
-                    if isinstance(value, dict) and key in value:
-                        value = value.get(key)
-                    else:
-                        value = None
-                        break
-            if value is not None:
-                try:
-                    return float(value)
-                except (TypeError, ValueError):  # noqa: PERF203
-                    continue
-        return None
+        try:
+            return self.unified_snapshot_price(snap)
+        except Exception:  # noqa: BLE001
+            return None
 
     def get_options_chain_snapshot(self, ticker: str) -> Dict[str, Any]:
         try:
@@ -355,7 +325,7 @@ class MassiveClient:
                 "GET",
                 "/v3/snapshot",
                 # Unified snapshot lexicographic search uses `ticker`, but we want an exact match
-                params={"ticker.any_of": ticker, "type": type, "limit": 1},
+                params={"ticker": ticker, "type": type, "limit": 1},
                 log_errors=False,
             )
         except Exception as exc:  # noqa: BLE001
@@ -413,6 +383,27 @@ class MassiveClient:
         )
 
         return match
+
+    def unified_snapshot_price(self, snapshot: Dict[str, Any]) -> Optional[float]:
+        if not isinstance(snapshot, dict):
+            return None
+
+        last_trade = snapshot.get("last_trade") or {}
+        last_quote = snapshot.get("last_quote") or {}
+        session = snapshot.get("session") or {}
+        price = (
+            (last_trade.get("price") or last_trade.get("p"))
+            or (last_quote.get("price") or last_quote.get("p"))
+            or (session.get("last") or session.get("close") or session.get("c"))
+            or snapshot.get("last")
+            or snapshot.get("last_price")
+            or snapshot.get("price")
+        )
+
+        try:
+            return float(price)
+        except (TypeError, ValueError):  # noqa: PERF203
+            return None
 
     def last_close_from_aggregates(
         self,
