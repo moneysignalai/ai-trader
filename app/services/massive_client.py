@@ -162,49 +162,9 @@ class MassiveClient:
             pass
 
         # 2) Massive unified snapshot (preferred for api.massive.com)
-        try:
-            data = self._request(
-                "GET",
-                "/v3/snapshot",
-                params={"ticker.any_of": ticker, "type": "stocks", "limit": 1},
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Unified snapshot unavailable for %s: %s", ticker, exc)
-            return None
-
-        payload: Dict[str, Any] = data if isinstance(data, dict) else {}
-        results = payload.get("results")
-        request_id = payload.get("request_id")
-
-        if not isinstance(results, list) or not results:
-            logger.warning(
-                "Unified snapshot missing results",
-                extra={"ticker": ticker, "type": "stocks", "request_id": request_id},
-            )
-            return None
-
-        match = next(
-            (row for row in results if row.get("ticker") == ticker and row.get("type") == "stocks"),
-            None,
-        )
+        match = self.unified_snapshot_single_ticker(ticker, type="stocks")
 
         if not isinstance(match, dict):
-            logger.warning(
-                "Unified snapshot no match",
-                extra={"ticker": ticker, "type": "stocks", "request_id": request_id},
-            )
-            return None
-
-        if "error" in match or "message" in match:
-            logger.warning(
-                "Unified snapshot returned error",
-                extra={
-                    "ticker": ticker,
-                    "type": "stocks",
-                    "request_id": request_id,
-                    "error": match.get("error") or match.get("message"),
-                },
-            )
             return None
 
         last_trade = match.get("last_trade") or {}
@@ -214,16 +174,6 @@ class MassiveClient:
             (last_trade.get("price") or last_trade.get("p"))
             or (last_quote.get("price") or last_quote.get("p"))
             or (session.get("last") or session.get("close") or session.get("c"))
-        )
-
-        logger.info(
-            "Unified snapshot ok",
-            extra={
-                "ticker": ticker,
-                "type": "stocks",
-                "market_status": match.get("market_status"),
-                "price": price,
-            },
         )
 
         return {"last_trade": last_trade, "last_quote": last_quote, "last": price, "raw": match}
@@ -242,3 +192,121 @@ class MassiveClient:
         results = data.get("results", []) if isinstance(data, dict) else []
         sorted_results = sorted(results, key=lambda r: r.get("v", 0), reverse=True)
         return [row.get("T") for row in sorted_results if row.get("T")]
+
+    def unified_snapshot_single_ticker(self, ticker: str, type: str = "stocks") -> Optional[Dict[str, Any]]:  # noqa: A002
+        try:
+            data = self._request(
+                "GET",
+                "/v3/snapshot",
+                params={"ticker": ticker, "type": type, "limit": 1},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Unified snapshot unavailable", extra={"ticker": ticker, "type": type, "error": str(exc)}
+            )
+            return None
+
+        payload: Dict[str, Any] = data if isinstance(data, dict) else {}
+        results = payload.get("results")
+        request_id = payload.get("request_id")
+
+        if not isinstance(results, list) or not results:
+            logger.warning(
+                "Unified snapshot missing results",
+                extra={"ticker": ticker, "type": type, "request_id": request_id},
+            )
+            return None
+
+        match = next(
+            (row for row in results if row.get("ticker") == ticker and row.get("type") == type),
+            results[0] if isinstance(results[0], dict) else None,
+        )
+
+        if not isinstance(match, dict):
+            logger.warning(
+                "Unified snapshot no match",
+                extra={"ticker": ticker, "type": type, "request_id": request_id},
+            )
+            return None
+
+        if "error" in match or "message" in match:
+            logger.warning(
+                "Unified snapshot returned error",
+                extra={
+                    "ticker": ticker,
+                    "type": type,
+                    "request_id": request_id,
+                    "error": match.get("error") or match.get("message"),
+                },
+            )
+            return None
+
+        logger.info(
+            "Unified snapshot ok",
+            extra={
+                "ticker": ticker,
+                "type": type,
+                "market_status": match.get("market_status"),
+                "price": match.get("last") or match.get("last_price") or match.get("price"),
+            },
+        )
+
+        return match
+
+    def last_close_from_aggregates(
+        self,
+        ticker: str,
+        lookback_days: int = 5,
+        timespan: str = "minute",
+        multiplier: int = 1,
+    ) -> Optional[float]:
+        end_date = et_today_date()
+        start_date = end_date - timedelta(days=lookback_days)
+        frm = iso_yyyy_mm_dd(start_date)
+        to = iso_yyyy_mm_dd(end_date)
+
+        try:
+            candles = self.get_aggregates(
+                ticker=ticker,
+                range=multiplier,
+                timespan=timespan,
+                frm=frm,
+                to=to,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Aggregates fallback failed", extra={"ticker": ticker, "error": str(exc), "from": frm, "to": to}
+            )
+            return None
+
+        if not candles:
+            logger.info(
+                "Aggregates fallback empty",
+                extra={"ticker": ticker, "from": frm, "to": to, "timespan": timespan, "multiplier": multiplier},
+            )
+            return None
+
+        last_candle = candles[-1]
+        close = None
+        if isinstance(last_candle, dict):
+            close = last_candle.get("close") or last_candle.get("c")
+
+        if close is None:
+            logger.info(
+                "Aggregates fallback missing close",
+                extra={"ticker": ticker, "from": frm, "to": to, "keys": list(last_candle.keys()) if isinstance(last_candle, dict) else None},
+            )
+            return None
+
+        logger.info(
+            "Aggregates fallback price computed",
+            extra={"ticker": ticker, "price": close, "from": frm, "to": to, "timespan": timespan, "multiplier": multiplier},
+        )
+        try:
+            return float(close)
+        except (TypeError, ValueError):  # noqa: PERF203
+            logger.info(
+                "Aggregates fallback close not numeric",
+                extra={"ticker": ticker, "close": close, "from": frm, "to": to},
+            )
+            return None
