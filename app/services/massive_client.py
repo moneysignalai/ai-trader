@@ -15,6 +15,26 @@ from app.utils.logging_utils import redact_url
 logger = logging.getLogger(__name__)
 
 
+def _extract_price_from_result(result: Dict[str, Any]) -> Optional[float]:
+    if not isinstance(result, dict):
+        return None
+
+    last_trade = result.get("last_trade") or result.get("lastTrade") or {}
+    last_quote = result.get("last_quote") or result.get("lastQuote") or {}
+    session = result.get("session") or result.get("day") or {}
+
+    price = (
+        (last_trade.get("price") or last_trade.get("p"))
+        or (last_quote.get("ap") or last_quote.get("price") or last_quote.get("p"))
+        or (session.get("last") or session.get("close") or session.get("c"))
+    )
+
+    try:
+        return float(price)
+    except (TypeError, ValueError):  # noqa: PERF203
+        return None
+
+
 class MassiveClient:
     def __init__(
         self,
@@ -80,38 +100,27 @@ class MassiveClient:
         self,
         method_name: str,
         path: str,
-        exc: Exception,
+        status: Optional[int],
+        snippet: Optional[str],
+        *,
+        exc: Exception | None = None,
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
-        status = None
-        snippet = None
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-            status = exc.response.status_code
-            try:
-                snippet = (exc.response.text or "")[:200]
-            except Exception:  # noqa: BLE001
-                snippet = None
-        elif isinstance(exc, httpx.RequestError) and hasattr(exc, "response"):
-            response = getattr(exc, "response", None)
-            if response is not None:
-                status = getattr(response, "status_code", None)
-                try:
-                    snippet = (getattr(response, "text", "") or "")[:200]
-                except Exception:  # noqa: BLE001
-                    snippet = None
-
         payload = {"path": path, "status": status, "snippet": snippet}
         if extra:
             payload.update(extra)
 
+        exc_info = False
+        if exc is not None:
+            exc_info = status is not None and status >= 500 or logger.isEnabledFor(logging.DEBUG)
+
         logger.warning(
-            "Snapshot call failed method=%s path=%s status=%s err=%s snippet=%s",
+            "Snapshot call failed method=%s path=%s status=%s snippet=%s",
             method_name,
             path,
             status,
-            exc,
             snippet,
-            exc_info=True,
+            exc_info=exc_info,
             extra=payload,
         )
 
@@ -247,16 +256,9 @@ class MassiveClient:
         a different snapshot surface (ex: `/v3/snapshot` unified snapshot).
         """
         # 0) Massive stock snapshot endpoint (preferred for api.massive.com stock snapshots)
-        try:
-            massive_price = self.massive_stock_snapshot_price(ticker)
-            if massive_price is not None:
-                return {"last": massive_price, "last_trade": {}, "last_quote": {}}
-        except Exception as exc:  # noqa: BLE001
-            self._log_snapshot_failure(
-                method_name="massive_stock_snapshot_price",
-                path=f"/v3/snapshot/stocks/{ticker}",
-                exc=exc,
-            )
+        massive_price = self.massive_stock_snapshot_price(ticker)
+        if massive_price is not None:
+            return {"last": massive_price, "last_trade": {}, "last_quote": {}}
 
         # 1) Polygon-style snapshot (legacy compatibility)
         try:
@@ -267,13 +269,25 @@ class MassiveClient:
             if isinstance(data, dict):
                 last_trade = data.get("lastTrade", {}) or {}
                 last_quote = data.get("lastQuote", {}) or {}
-                price = last_trade.get("p") or last_quote.get("p") or last_quote.get("last")
+                price = _extract_price_from_result(
+                    {"lastTrade": last_trade, "lastQuote": last_quote, "day": data.get("day") or {}}
+                )
                 if price is not None:
                     return {"last_trade": last_trade, "last_quote": last_quote, "last": price}
         except Exception as exc:  # noqa: BLE001
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            snippet = None
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    snippet = (getattr(response, "text", "") or "")[:200]
+                except Exception:  # noqa: BLE001
+                    snippet = None
             self._log_snapshot_failure(
                 method_name="get_snapshot_polygon",
                 path=f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}",
+                status=status,
+                snippet=snippet,
                 exc=exc,
             )
 
@@ -286,22 +300,67 @@ class MassiveClient:
         last_trade = match.get("last_trade") or {}
         last_quote = match.get("last_quote") or {}
         session = match.get("session") or {}
-        price = (
-            (last_trade.get("price") or last_trade.get("p"))
-            or (last_quote.get("price") or last_quote.get("p"))
-            or (session.get("last") or session.get("close") or session.get("c"))
-        )
+        price = _extract_price_from_result(match)
+
+        if price is None:
+            price = (session.get("last") or session.get("close") or session.get("c"))
 
         return {"last_trade": last_trade, "last_quote": last_quote, "last": price, "raw": match}
 
     def massive_stock_snapshot_price(self, ticker: str) -> Optional[float]:
-        snap = self.unified_snapshot_single_ticker(ticker, type="stocks")
-        if not snap:
+        path = f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
+        try:
+            data = self._request("GET", path, log_errors=False)
+        except httpx.HTTPStatusError as exc:
+            text = None
+            try:
+                text = (exc.response.text or "")[:200]
+            except Exception:  # noqa: BLE001
+                text = None
+            self._log_snapshot_failure(
+                method_name="massive_stock_snapshot_price",
+                path=path,
+                status=exc.response.status_code if exc.response else None,
+                snippet=text,
+                exc=exc,
+                extra={"ticker": ticker},
+            )
+            return None
+        except Exception as exc:  # noqa: BLE001
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            snippet = None
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    snippet = (getattr(response, "text", "") or "")[:200]
+                except Exception:  # noqa: BLE001
+                    snippet = None
+            self._log_snapshot_failure(
+                method_name="massive_stock_snapshot_price",
+                path=path,
+                status=status,
+                snippet=snippet,
+                exc=exc,
+                extra={"ticker": ticker},
+            )
             return None
 
+        if not isinstance(data, dict):
+            return None
+
+        last_trade = data.get("lastTrade") or {}
+        last_quote = data.get("lastQuote") or {}
+        day = data.get("day") or {}
+
+        price = (
+            (last_trade.get("p"))
+            or (last_quote.get("ap") or last_quote.get("ask") or last_quote.get("p"))
+            or day.get("c")
+        )
+
         try:
-            return self.unified_snapshot_price(snap)
-        except Exception:  # noqa: BLE001
+            return float(price)
+        except (TypeError, ValueError):  # noqa: PERF203
             return None
 
     def get_options_chain_snapshot(self, ticker: str) -> Dict[str, Any]:
@@ -324,34 +383,63 @@ class MassiveClient:
             data = self._request(
                 "GET",
                 "/v3/snapshot",
-                # Unified snapshot lexicographic search uses `ticker`, but we want an exact match
-                params={"ticker": ticker, "type": type, "limit": 1},
+                params={"ticker": ticker, "limit": 1},
                 log_errors=False,
             )
-        except Exception as exc:  # noqa: BLE001
+        except httpx.HTTPStatusError as exc:
+            snippet = None
+            try:
+                snippet = (exc.response.text or "")[:200]
+            except Exception:  # noqa: BLE001
+                snippet = None
             self._log_snapshot_failure(
                 method_name="unified_snapshot_single_ticker",
                 path="/v3/snapshot",
+                status=exc.response.status_code if exc.response else None,
+                snippet=snippet,
+                exc=exc,
+                extra={"ticker": ticker, "type": type},
+            )
+            return None
+        except Exception as exc:  # noqa: BLE001
+            response = getattr(exc, "response", None)
+            status = getattr(response, "status_code", None)
+            snippet = None
+            if response is not None:
+                try:
+                    snippet = (getattr(response, "text", "") or "")[:200]
+                except Exception:  # noqa: BLE001
+                    snippet = None
+            self._log_snapshot_failure(
+                method_name="unified_snapshot_single_ticker",
+                path="/v3/snapshot",
+                status=status,
+                snippet=snippet,
                 exc=exc,
                 extra={"ticker": ticker, "type": type},
             )
             return None
 
         payload: Dict[str, Any] = data if isinstance(data, dict) else {}
-        results = payload.get("results")
+        results: List[Dict[str, Any]] = []
         request_id = payload.get("request_id")
 
-        if not isinstance(results, list) or not results:
+        raw_results = payload.get("results")
+        raw_result = payload.get("result")
+
+        if isinstance(raw_results, list):
+            results = [row for row in raw_results if isinstance(row, dict)]
+        elif isinstance(raw_result, dict):
+            results = [raw_result]
+
+        if not results:
             logger.warning(
                 "Unified snapshot missing results",
                 extra={"ticker": ticker, "type": type, "request_id": request_id},
             )
             return None
 
-        match = next(
-            (row for row in results if row.get("ticker") == ticker and row.get("type") == type),
-            results[0] if isinstance(results[0], dict) else None,
-        )
+        match = next((row for row in results if row.get("ticker") == ticker), results[0])
 
         if not isinstance(match, dict):
             logger.warning(
@@ -388,17 +476,11 @@ class MassiveClient:
         if not isinstance(snapshot, dict):
             return None
 
-        last_trade = snapshot.get("last_trade") or {}
-        last_quote = snapshot.get("last_quote") or {}
-        session = snapshot.get("session") or {}
-        price = (
-            (last_trade.get("price") or last_trade.get("p"))
-            or (last_quote.get("price") or last_quote.get("p"))
-            or (session.get("last") or session.get("close") or session.get("c"))
-            or snapshot.get("last")
-            or snapshot.get("last_price")
-            or snapshot.get("price")
-        )
+        price = _extract_price_from_result(snapshot)
+        if price is not None:
+            return price
+
+        price = snapshot.get("last") or snapshot.get("last_price") or snapshot.get("price")
 
         try:
             return float(price)
@@ -462,3 +544,11 @@ class MassiveClient:
                 extra={"ticker": ticker, "close": close, "from": frm, "to": to},
             )
             return None
+
+
+if __name__ == "__main__":
+    # Lightweight validation of price extraction helper without external calls.
+    assert _extract_price_from_result({"last_trade": {"p": 101.5}}) == 101.5
+    assert _extract_price_from_result({"lastQuote": {"ap": "202.1"}}) == 202.1
+    assert _extract_price_from_result({"day": {"c": 303.3}}) == 303.3
+    print("_extract_price_from_result helper checks passed.")
