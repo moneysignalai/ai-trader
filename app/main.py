@@ -139,12 +139,7 @@ def get_maintenance_price(ticker: str, client: MassiveClient) -> float:
         )
         return legacy_price
 
-    px = client.last_close_from_aggregates(
-        ticker=ticker,
-        lookback_days=5,
-        timespan="minute",
-        multiplier=1,
-    )
+    px = client.latest_price_from_aggregates(ticker)
     if px is not None:
         price = float(px)
         logger.info(
@@ -178,6 +173,15 @@ def get_execution_price(ticker: str, client: MassiveClient) -> float | None:
             legacy_price,
         )
         return legacy_price
+
+    aggregates_px = client.latest_price_from_aggregates(ticker)
+    if aggregates_px is not None:
+        logger.info(
+            "Price lookup: ticker=%s kind=execution source=aggregates_fallback price=%s",
+            ticker,
+            aggregates_px,
+        )
+        return float(aggregates_px)
 
     logger.warning(
         "Price lookup: ticker=%s kind=execution source=missing price=None", ticker

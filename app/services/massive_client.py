@@ -76,6 +76,45 @@ class MassiveClient:
                 raise
         raise RuntimeError("Failed request")
 
+    def _log_snapshot_failure(
+        self,
+        method_name: str,
+        path: str,
+        exc: Exception,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        status = None
+        snippet = None
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+            status = exc.response.status_code
+            try:
+                snippet = (exc.response.text or "")[:200]
+            except Exception:  # noqa: BLE001
+                snippet = None
+        elif isinstance(exc, httpx.RequestError) and hasattr(exc, "response"):
+            response = getattr(exc, "response", None)
+            if response is not None:
+                status = getattr(response, "status_code", None)
+                try:
+                    snippet = (getattr(response, "text", "") or "")[:200]
+                except Exception:  # noqa: BLE001
+                    snippet = None
+
+        payload = {"path": path, "status": status, "snippet": snippet}
+        if extra:
+            payload.update(extra)
+
+        logger.warning(
+            "Snapshot call failed method=%s path=%s status=%s err=%s snippet=%s",
+            method_name,
+            path,
+            status,
+            exc,
+            snippet,
+            exc_info=True,
+            extra=payload,
+        )
+
     def get_aggregates(
         self,
         ticker: str,
@@ -84,6 +123,7 @@ class MassiveClient:
         limit: Optional[int] = None,
         frm: Optional[str] = None,
         to: Optional[str] = None,
+        sort: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         params: Dict[str, Any] = {}
 
@@ -99,6 +139,8 @@ class MassiveClient:
 
         if limit:
             params["limit"] = limit
+        if sort:
+            params["sort"] = sort
         if frm:
             params["from"] = frm
         if to:
@@ -116,6 +158,56 @@ class MassiveClient:
         path = f"/v2/aggs/grouped/locale/us/market/stocks/{on_date}"
         data = self._request("GET", path)
         return data.get("results", []) if isinstance(data, dict) else []
+
+    def latest_price_from_aggregates(self, ticker: str) -> Optional[float]:
+        today_et = et_today_date()
+        frm = iso_yyyy_mm_dd(today_et - timedelta(days=7))
+        to = iso_yyyy_mm_dd(today_et)
+
+        try:
+            candles = self.get_aggregates(
+                ticker=ticker,
+                range=1,
+                timespan="minute",
+                frm=frm,
+                to=to,
+                limit=1,
+                sort="desc",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Latest price from aggregates failed",
+                extra={"ticker": ticker, "error": str(exc), "from": frm, "to": to},
+            )
+            return None
+
+        if not candles:
+            logger.info(
+                "Latest price from aggregates empty",
+                extra={"ticker": ticker, "from": frm, "to": to},
+            )
+            return None
+
+        latest = candles[0]
+        close = None
+        if isinstance(latest, dict):
+            close = latest.get("c") or latest.get("close") or latest.get("o") or latest.get("h") or latest.get("l")
+
+        if close is None:
+            logger.info(
+                "Latest price from aggregates missing close",
+                extra={"ticker": ticker, "from": frm, "to": to, "keys": list(latest.keys()) if isinstance(latest, dict) else None},
+            )
+            return None
+
+        try:
+            return float(close)
+        except (TypeError, ValueError):  # noqa: PERF203
+            logger.info(
+                "Latest price from aggregates close not numeric",
+                extra={"ticker": ticker, "close": close},
+            )
+            return None
 
     def get_reference_tickers(self, market: str = "stocks", locale: str = "us") -> List[str]:
         tickers: List[str] = []
@@ -154,6 +246,18 @@ class MassiveClient:
         deployments point MASSIVE_BASE_URL to Massive (api.massive.com), which uses
         a different snapshot surface (ex: `/v3/snapshot` unified snapshot).
         """
+        # 0) Massive stock snapshot endpoint (preferred for api.massive.com stock snapshots)
+        try:
+            massive_price = self.massive_stock_snapshot_price(ticker)
+            if massive_price is not None:
+                return {"last": massive_price, "last_trade": {}, "last_quote": {}}
+        except Exception as exc:  # noqa: BLE001
+            self._log_snapshot_failure(
+                method_name="massive_stock_snapshot_price",
+                path=f"/v3/snapshot/stocks/{ticker}",
+                exc=exc,
+            )
+
         # 1) Polygon-style snapshot (legacy compatibility)
         try:
             data = self._request(
@@ -166,8 +270,12 @@ class MassiveClient:
                 price = last_trade.get("p") or last_quote.get("p") or last_quote.get("last")
                 if price is not None:
                     return {"last_trade": last_trade, "last_quote": last_quote, "last": price}
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            self._log_snapshot_failure(
+                method_name="get_snapshot_polygon",
+                path=f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}",
+                exc=exc,
+            )
 
         # 2) Massive unified snapshot (preferred for api.massive.com)
         match = self.unified_snapshot_single_ticker(ticker, type="stocks")
@@ -185,6 +293,46 @@ class MassiveClient:
         )
 
         return {"last_trade": last_trade, "last_quote": last_quote, "last": price, "raw": match}
+
+    def massive_stock_snapshot_price(self, ticker: str) -> Optional[float]:
+        path = f"/v3/snapshot/stocks/{ticker}"
+        try:
+            data = self._request("GET", path)
+        except Exception as exc:  # noqa: BLE001
+            self._log_snapshot_failure("massive_stock_snapshot_price", path, exc)
+            return None
+
+        price_sources = [
+            ("results", 0, "last", "price"),
+            ("results", 0, "lastPrice"),
+            ("results", 0, "last", "p"),
+            ("result", "last", "price"),
+            ("data", "last", "price"),
+            ("ticker", "lastTrade", "p"),
+            ("day", "c"),
+        ]
+
+        for path_keys in price_sources:
+            value: Any = data
+            for key in path_keys:
+                if isinstance(key, int):
+                    if isinstance(value, list) and len(value) > key:
+                        value = value[key]
+                    else:
+                        value = None
+                        break
+                else:
+                    if isinstance(value, dict) and key in value:
+                        value = value.get(key)
+                    else:
+                        value = None
+                        break
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):  # noqa: PERF203
+                    continue
+        return None
 
     def get_options_chain_snapshot(self, ticker: str) -> Dict[str, Any]:
         try:
@@ -211,8 +359,11 @@ class MassiveClient:
                 log_errors=False,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Unified snapshot unavailable", extra={"ticker": ticker, "type": type, "error": str(exc)}
+            self._log_snapshot_failure(
+                method_name="unified_snapshot_single_ticker",
+                path="/v3/snapshot",
+                exc=exc,
+                extra={"ticker": ticker, "type": type},
             )
             return None
 
